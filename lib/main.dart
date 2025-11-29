@@ -328,53 +328,19 @@ String _generateId() => DateTime.now().microsecondsSinceEpoch.toString();
 
 class TripTallyLogo extends StatelessWidget {
   final double size;
-  final Color? color;
 
-  const TripTallyLogo({super.key, this.size = 120, this.color});
+  const TripTallyLogo({super.key, this.size = 120});
 
   @override
   Widget build(BuildContext context) {
-    final primaryColor = color ?? Theme.of(context).primaryColor;
-
-    return SizedBox(
+    return Image.asset(
+      'assets/icon/app_logo.png',
       width: size,
       height: size,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          // Background circle
-          Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              color: primaryColor.withOpacity(0.1),
-              shape: BoxShape.circle,
-            ),
-          ),
-          // Icons in a creative layout
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // Mountains icon at top
-              Icon(Icons.landscape, size: size * 0.4, color: primaryColor),
-              SizedBox(height: size * 0.05),
-              // Money and Calculator icons side by side
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.attach_money,
-                    size: size * 0.25,
-                    color: primaryColor,
-                  ),
-                  SizedBox(width: size * 0.1),
-                  Icon(Icons.calculate, size: size * 0.25, color: primaryColor),
-                ],
-              ),
-            ],
-          ),
-        ],
-      ),
+      fit: BoxFit.contain,
+      errorBuilder: (context, error, stackTrace) {
+        return Icon(Icons.image_not_supported, size: size, color: Colors.grey);
+      },
     );
   }
 }
