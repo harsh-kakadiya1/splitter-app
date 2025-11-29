@@ -1593,6 +1593,7 @@ class SummaryScreen extends StatefulWidget {
 class _SummaryScreenState extends State<SummaryScreen> {
   SplitGroup? _group;
   SummaryMode _mode = SummaryMode.overall;
+  String? _selectedReceiverId;
 
   @override
   void initState() {
@@ -1650,32 +1651,140 @@ class _SummaryScreenState extends State<SummaryScreen> {
           ),
           const SizedBox(height: 16),
           if (_mode == SummaryMode.overall) ...[
+            // Filter helpers based on selected receiver
+            Builder(
+              builder: (context) {
+                final receivers = balances
+                    .where((b) => b.balance < -0.01)
+                    .toList();
+                final hasSelection = _selectedReceiverId != null;
+                final selectedBalance = hasSelection
+                    ? receivers.firstWhere(
+                        (b) => b.member.id == _selectedReceiverId,
+                        orElse: () => receivers.first,
+                      )
+                    : null;
+
+                if (receivers.isEmpty) {
+                  _selectedReceiverId = null;
+                  return const SizedBox.shrink();
+                }
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'See who has to receive money',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: receivers.map((b) {
+                        final isSelected = _selectedReceiverId == b.member.id;
+                        return ChoiceChip(
+                          label: Text(b.member.name),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            setState(() {
+                              _selectedReceiverId = selected
+                                  ? b.member.id
+                                  : null;
+                            });
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 12),
+                    Card(
+                      elevation: 3,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              hasSelection
+                                  ? '${selectedBalance!.member.name} will receive in total'
+                                  : 'Overall to receive (all members)',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withOpacity(0.7),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              hasSelection
+                                  ? '₹${(-selectedBalance!.balance).toStringAsFixed(2)}'
+                                  : '₹${receivers.fold<double>(0, (sum, b) => sum + (-b.balance)).toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                fontSize: 28,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            if (hasSelection) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                'Selected member has to receive from others. ',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ] else ...[
+                              const SizedBox(height: 4),
+                              const Text(
+                                'Tap on a name above to see full summary only for that member.',
+                                style: TextStyle(fontSize: 12),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 8),
             const Text(
               'Member balances',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            ...balances.map((b) {
-              final amount = b.balance.abs();
-              String text;
-              Color color;
-              if (b.balance > 0.01) {
-                text =
-                    '${b.member.name} should pay ₹${amount.toStringAsFixed(2)}';
-                color = Colors.red;
-              } else if (b.balance < -0.01) {
-                text =
-                    '${b.member.name} will receive ₹${amount.toStringAsFixed(2)}';
-                color = Colors.green;
-              } else {
-                text = '${b.member.name} is settled up';
-                color = Colors.grey;
-              }
-              return ListTile(
-                dense: true,
-                title: Text(text, style: TextStyle(color: color)),
-              );
-            }),
+            ...(() {
+              final iterable = _selectedReceiverId == null
+                  ? balances
+                  : balances.where((b) => b.member.id == _selectedReceiverId);
+              return iterable.map((b) {
+                final amount = b.balance.abs();
+                String text;
+                Color color;
+                if (b.balance > 0.01) {
+                  text =
+                      '${b.member.name} should pay ₹${amount.toStringAsFixed(2)}';
+                  color = Colors.red;
+                } else if (b.balance < -0.01) {
+                  text =
+                      '${b.member.name} will receive ₹${amount.toStringAsFixed(2)}';
+                  color = Colors.green;
+                } else {
+                  text = '${b.member.name} is settled up';
+                  color = Colors.grey;
+                }
+                return ListTile(
+                  dense: true,
+                  title: Text(text, style: TextStyle(color: color)),
+                );
+              }).toList();
+            })(),
             const SizedBox(height: 16),
             const Divider(),
             const SizedBox(height: 8),
@@ -1687,15 +1796,24 @@ class _SummaryScreenState extends State<SummaryScreen> {
             if (transfers.isEmpty)
               const Text('Everyone is settled up.')
             else
-              ...transfers.map(
-                (t) => ListTile(
-                  dense: true,
-                  leading: const Icon(Icons.swap_horiz),
-                  title: Text(
-                    '${t.from.name} → ${t.to.name}: ₹${t.amount.toStringAsFixed(2)}',
+              ...(() {
+                final iterable = _selectedReceiverId == null
+                    ? transfers
+                    : transfers.where(
+                        (t) =>
+                            t.to.id == _selectedReceiverId ||
+                            t.from.id == _selectedReceiverId,
+                      );
+                return iterable.map(
+                  (t) => ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.swap_horiz),
+                    title: Text(
+                      '${t.from.name} → ${t.to.name}: ₹${t.amount.toStringAsFixed(2)}',
+                    ),
                   ),
-                ),
-              ),
+                );
+              })(),
             const SizedBox(height: 16),
             const Divider(),
             const SizedBox(height: 8),
@@ -1704,69 +1822,76 @@ class _SummaryScreenState extends State<SummaryScreen> {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            ...group.members.map((m) {
-              final balance = balances
-                  .firstWhere((b) => b.member.id == m.id)
-                  .balance;
-              final pays = transfers.where((t) => t.from.id == m.id).toList();
-              final receives = transfers.where((t) => t.to.id == m.id).toList();
+            ...(() {
+              final membersIterable = _selectedReceiverId == null
+                  ? group.members
+                  : group.members.where((m) => m.id == _selectedReceiverId);
+              return membersIterable.map((m) {
+                final balance = balances
+                    .firstWhere((b) => b.member.id == m.id)
+                    .balance;
+                final pays = transfers.where((t) => t.from.id == m.id).toList();
+                final receives = transfers
+                    .where((t) => t.to.id == m.id)
+                    .toList();
 
-              final List<Widget> lines = [];
+                final List<Widget> lines = [];
 
-              if (balance.abs() < 0.01) {
-                lines.add(
-                  const Text(
-                    'Settled up with everyone.',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                );
-              } else if (balance > 0.01) {
-                lines.add(
-                  Text(
-                    'Total to pay: ₹${balance.toStringAsFixed(2)}',
-                    style: const TextStyle(color: Colors.red),
-                  ),
-                );
-              } else {
-                lines.add(
-                  Text(
-                    'Total to receive: ₹${(-balance).toStringAsFixed(2)}',
-                    style: const TextStyle(color: Colors.green),
-                  ),
-                );
-              }
+                if (balance.abs() < 0.01) {
+                  lines.add(
+                    const Text(
+                      'Settled up with everyone.',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  );
+                } else if (balance > 0.01) {
+                  lines.add(
+                    Text(
+                      'Total to pay: ₹${balance.toStringAsFixed(2)}',
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  );
+                } else {
+                  lines.add(
+                    Text(
+                      'Total to receive: ₹${(-balance).toStringAsFixed(2)}',
+                      style: const TextStyle(color: Colors.green),
+                    ),
+                  );
+                }
 
-              for (final t in pays) {
-                lines.add(
-                  Text('Pay ${t.to.name} ₹${t.amount.toStringAsFixed(2)}'),
-                );
-              }
-              for (final t in receives) {
-                lines.add(
-                  Text(
-                    'Receive from ${t.from.name} ₹${t.amount.toStringAsFixed(2)}',
-                  ),
-                );
-              }
+                for (final t in pays) {
+                  lines.add(
+                    Text('Pay ${t.to.name} ₹${t.amount.toStringAsFixed(2)}'),
+                  );
+                }
+                for (final t in receives) {
+                  lines.add(
+                    Text(
+                      'Receive from ${t.from.name} ₹${t.amount.toStringAsFixed(2)}',
+                    ),
+                  );
+                }
 
-              return Card(
-                margin: const EdgeInsets.only(bottom: 8),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        m.name,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 4),
-                      ...lines,
-                    ],
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          m.name,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 4),
+                        ...lines,
+                      ],
+                    ),
                   ),
-                ),
-              );
-            }),
+                );
+              }).toList();
+            })(),
           ] else ...[
             const Text(
               'Expense-wise (to payer)',
