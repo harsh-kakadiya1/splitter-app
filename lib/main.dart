@@ -33,7 +33,7 @@ class SplitterApp extends StatelessWidget {
         );
         return MaterialApp(
           debugShowCheckedModeBanner: false,
-          title: 'Smart Splitter',
+          title: 'TripTally',
           theme: ThemeData(
             colorScheme: lightScheme,
             useMaterial3: true,
@@ -131,6 +131,29 @@ class SplitterApp extends StatelessWidget {
 
 // MODELS
 
+enum ExpenseCategory {
+  food('Food', Icons.restaurant, Color(0xFFFF6B6B)),
+  transport('Transport', Icons.directions_car, Color(0xFF4ECDC4)),
+  accommodation('Accommodation', Icons.hotel, Color(0xFF45B7D1)),
+  entertainment('Entertainment', Icons.movie, Color(0xFFFFA07A)),
+  shopping('Shopping', Icons.shopping_bag, Color(0xFF98D8C8)),
+  utilities('Utilities', Icons.bolt, Color(0xFFFFD93D)),
+  healthcare('Healthcare', Icons.local_hospital, Color(0xFF6BCB77)),
+  other('Other', Icons.category, Color(0xFF95A5A6));
+
+  const ExpenseCategory(this.label, this.icon, this.color);
+  final String label;
+  final IconData icon;
+  final Color color;
+
+  static ExpenseCategory fromString(String value) {
+    return ExpenseCategory.values.firstWhere(
+      (cat) => cat.name == value,
+      orElse: () => ExpenseCategory.other,
+    );
+  }
+}
+
 class Member {
   Member({required this.id, required this.name});
 
@@ -153,6 +176,7 @@ class Expense {
     required this.involvedMemberIds,
     required this.createdAt,
     this.shares,
+    this.category,
   });
 
   final String id;
@@ -163,6 +187,7 @@ class Expense {
   final List<String> involvedMemberIds;
   final DateTime createdAt;
   final Map<String, double>? shares; // optional per-member share (amount)
+  final ExpenseCategory? category;
 
   factory Expense.fromJson(Map<String, dynamic> json) => Expense(
     id: json['id'] as String,
@@ -177,6 +202,9 @@ class Expense {
     shares: (json['shares'] as Map<String, dynamic>?)?.map(
       (key, value) => MapEntry(key, (value as num).toDouble()),
     ),
+    category: json['category'] != null
+        ? ExpenseCategory.fromString(json['category'] as String)
+        : null,
   );
 
   Map<String, dynamic> toJson() => {
@@ -188,6 +216,7 @@ class Expense {
     'involvedMemberIds': involvedMemberIds,
     'createdAt': createdAt.toIso8601String(),
     if (shares != null) 'shares': shares,
+    if (category != null) 'category': category!.name,
   };
 }
 
@@ -363,7 +392,33 @@ class _HomeScreenState extends State<HomeScreen> {
         future: _groupsFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: 3,
+              itemBuilder: (context, index) => Card(
+                margin: const EdgeInsets.only(bottom: 12),
+                child: ListTile(
+                  leading: CircleAvatar(backgroundColor: Colors.grey.shade300),
+                  title: Container(
+                    height: 16,
+                    width: 150,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  subtitle: Container(
+                    margin: const EdgeInsets.only(top: 8),
+                    height: 12,
+                    width: 100,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+              ),
+            );
           }
           final groups = snapshot.data ?? [];
           if (groups.isEmpty) {
@@ -668,27 +723,130 @@ class GroupDetailScreen extends StatefulWidget {
   State<GroupDetailScreen> createState() => _GroupDetailScreenState();
 }
 
+enum ExpenseSortBy { date, amount, payer }
+
 class _GroupDetailScreenState extends State<GroupDetailScreen> {
   SplitGroup? _group;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  ExpenseCategory? _filterCategory;
+  String? _filterPayerId;
+  DateTimeRange? _dateRange;
+  ExpenseSortBy _sortBy = ExpenseSortBy.date;
+  bool _sortAscending = false;
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _searchController.addListener(() {
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
-    final groups = await _storage.loadGroups();
     setState(() {
-      _group = groups.firstWhere((g) => g.id == widget.groupId);
+      _isLoading = true;
     });
+    // Simulate loading delay for skeleton effect
+    await Future.delayed(const Duration(milliseconds: 300));
+    final groups = await _storage.loadGroups();
+    if (mounted) {
+      setState(() {
+        _group = groups.firstWhere((g) => g.id == widget.groupId);
+        _isLoading = false;
+      });
+    }
+  }
+
+  List<Expense> _getFilteredExpenses() {
+    if (_group == null) return [];
+    var expenses = List<Expense>.from(_group!.expenses);
+
+    // Search filter
+    if (_searchQuery.isNotEmpty) {
+      expenses = expenses.where((e) {
+        return e.title.toLowerCase().contains(_searchQuery) ||
+            e.description.toLowerCase().contains(_searchQuery);
+      }).toList();
+    }
+
+    // Category filter
+    if (_filterCategory != null) {
+      expenses = expenses.where((e) => e.category == _filterCategory).toList();
+    }
+
+    // Payer filter
+    if (_filterPayerId != null) {
+      expenses = expenses.where((e) => e.payerId == _filterPayerId).toList();
+    }
+
+    // Date range filter
+    if (_dateRange != null) {
+      expenses = expenses.where((e) {
+        return e.createdAt.isAfter(
+              _dateRange!.start.subtract(const Duration(days: 1)),
+            ) &&
+            e.createdAt.isBefore(_dateRange!.end.add(const Duration(days: 1)));
+      }).toList();
+    }
+
+    // Sort
+    expenses.sort((a, b) {
+      int comparison = 0;
+      switch (_sortBy) {
+        case ExpenseSortBy.date:
+          comparison = a.createdAt.compareTo(b.createdAt);
+          break;
+        case ExpenseSortBy.amount:
+          comparison = a.amount.compareTo(b.amount);
+          break;
+        case ExpenseSortBy.payer:
+          final payerA = _group!.members
+              .firstWhere((m) => m.id == a.payerId)
+              .name;
+          final payerB = _group!.members
+              .firstWhere((m) => m.id == b.payerId)
+              .name;
+          comparison = payerA.compareTo(payerB);
+          break;
+      }
+      return _sortAscending ? comparison : -comparison;
+    });
+
+    return expenses;
   }
 
   Future<void> _addExpense() async {
     if (_group == null) return;
     await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => AddExpenseScreen(groupId: widget.groupId),
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            AddExpenseScreen(groupId: widget.groupId),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          const begin = Offset(0.0, 1.0);
+          const end = Offset.zero;
+          const curve = Curves.ease;
+
+          var tween = Tween(
+            begin: begin,
+            end: end,
+          ).chain(CurveTween(curve: curve));
+
+          return SlideTransition(
+            position: animation.drive(tween),
+            child: child,
+          );
+        },
       ),
     );
     await _load();
@@ -697,7 +855,13 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
   Future<void> _openSummary() async {
     if (_group == null) return;
     await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => SummaryScreen(groupId: widget.groupId)),
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            SummaryScreen(groupId: widget.groupId),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+      ),
     );
     await _load();
   }
@@ -705,27 +869,152 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
   Future<void> _openSettle() async {
     if (_group == null) return;
     await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => SettleScreen(groupId: widget.groupId)),
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            SettleScreen(groupId: widget.groupId),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+      ),
     );
     await _load();
   }
 
   Future<void> _openExpenseDetail(Expense expense) async {
     await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) =>
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
             ExpenseDetailScreen(groupId: widget.groupId, expenseId: expense.id),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          const begin = Offset(1.0, 0.0);
+          const end = Offset.zero;
+          const curve = Curves.easeInOut;
+
+          var tween = Tween(
+            begin: begin,
+            end: end,
+          ).chain(CurveTween(curve: curve));
+
+          return SlideTransition(
+            position: animation.drive(tween),
+            child: child,
+          );
+        },
       ),
     );
     await _load();
   }
 
+  Map<ExpenseCategory, double> _getCategoryStatistics(SplitGroup group) {
+    final stats = <ExpenseCategory, double>{};
+    for (final expense in group.expenses) {
+      if (expense.category != null) {
+        stats[expense.category!] =
+            (stats[expense.category] ?? 0) + expense.amount;
+      }
+    }
+    return stats;
+  }
+
+  String _getSortLabel() {
+    switch (_sortBy) {
+      case ExpenseSortBy.date:
+        return 'Date';
+      case ExpenseSortBy.amount:
+        return 'Amount';
+      case ExpenseSortBy.payer:
+        return 'Payer';
+    }
+  }
+
+  String _getSortLabelFor(ExpenseSortBy sort) {
+    switch (sort) {
+      case ExpenseSortBy.date:
+        return 'Date';
+      case ExpenseSortBy.amount:
+        return 'Amount';
+      case ExpenseSortBy.payer:
+        return 'Payer';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final group = _group;
-    if (group == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (group == null || _isLoading) {
+      return Scaffold(
+        appBar: AppBar(
+          title: Container(
+            height: 20,
+            width: 150,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade300,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+        ),
+        body: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // Search skeleton
+            Container(
+              height: 56,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Filter chips skeleton
+            Row(
+              children: List.generate(
+                4,
+                (index) => Container(
+                  margin: const EdgeInsets.only(right: 8),
+                  height: 32,
+                  width: 80,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Expense cards skeleton
+            ...List.generate(
+              5,
+              (index) => Card(
+                margin: const EdgeInsets.only(bottom: 8),
+                child: ListTile(
+                  leading: CircleAvatar(backgroundColor: Colors.grey.shade300),
+                  title: Container(
+                    height: 16,
+                    width: 150,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  subtitle: Container(
+                    margin: const EdgeInsets.only(top: 8),
+                    height: 12,
+                    width: 100,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
     }
+
+    final filteredExpenses = _getFilteredExpenses();
+    final categoryStats = _getCategoryStatistics(group);
 
     return Scaffold(
       appBar: AppBar(
@@ -746,6 +1035,220 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // Search bar
+          TextField(
+            controller: _searchController,
+            decoration: InputDecoration(
+              hintText: 'Search expenses...',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _searchQuery.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        _searchController.clear();
+                      },
+                    )
+                  : null,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          // Filter chips row
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                // Category filter
+                PopupMenuButton<ExpenseCategory?>(
+                  icon: Chip(
+                    avatar: Icon(
+                      _filterCategory?.icon ?? Icons.category,
+                      size: 16,
+                    ),
+                    label: Text(_filterCategory?.label ?? 'Category'),
+                    onDeleted: _filterCategory != null
+                        ? () {
+                            setState(() {
+                              _filterCategory = null;
+                            });
+                          }
+                        : null,
+                  ),
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: null,
+                      child: Text('All categories'),
+                    ),
+                    ...ExpenseCategory.values.map(
+                      (cat) => PopupMenuItem(
+                        value: cat,
+                        child: Row(
+                          children: [
+                            Icon(cat.icon, color: cat.color),
+                            const SizedBox(width: 8),
+                            Text(cat.label),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                  onSelected: (value) {
+                    setState(() {
+                      _filterCategory = value;
+                    });
+                  },
+                ),
+                const SizedBox(width: 8),
+                // Payer filter
+                PopupMenuButton<String?>(
+                  icon: Chip(
+                    avatar: const Icon(Icons.person, size: 16),
+                    label: Text(
+                      _filterPayerId != null
+                          ? group.members
+                                .firstWhere((m) => m.id == _filterPayerId)
+                                .name
+                          : 'Payer',
+                    ),
+                    onDeleted: _filterPayerId != null
+                        ? () {
+                            setState(() {
+                              _filterPayerId = null;
+                            });
+                          }
+                        : null,
+                  ),
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(value: null, child: Text('All payers')),
+                    ...group.members.map(
+                      (m) => PopupMenuItem(value: m.id, child: Text(m.name)),
+                    ),
+                  ],
+                  onSelected: (value) {
+                    setState(() {
+                      _filterPayerId = value;
+                    });
+                  },
+                ),
+                const SizedBox(width: 8),
+                // Date range filter
+                GestureDetector(
+                  onTap: () async {
+                    final range = await showDateRangePicker(
+                      context: context,
+                      firstDate: DateTime(2020),
+                      lastDate: DateTime.now(),
+                      initialDateRange: _dateRange,
+                    );
+                    if (range != null) {
+                      setState(() {
+                        _dateRange = range;
+                      });
+                    }
+                  },
+                  child: Chip(
+                    avatar: const Icon(Icons.date_range, size: 16),
+                    label: Text(
+                      _dateRange != null
+                          ? '${_dateRange!.start.day}/${_dateRange!.start.month} - ${_dateRange!.end.day}/${_dateRange!.end.month}'
+                          : 'Date',
+                    ),
+                    onDeleted: _dateRange != null
+                        ? () {
+                            setState(() {
+                              _dateRange = null;
+                            });
+                          }
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Sort
+                PopupMenuButton<MapEntry<ExpenseSortBy, bool>>(
+                  icon: Chip(
+                    avatar: Icon(
+                      _sortAscending
+                          ? Icons.arrow_upward
+                          : Icons.arrow_downward,
+                      size: 16,
+                    ),
+                    label: Text(_getSortLabel()),
+                  ),
+                  itemBuilder: (context) => [
+                    ...ExpenseSortBy.values.map(
+                      (sort) => PopupMenuItem(
+                        value: MapEntry(sort, true),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.arrow_upward,
+                              size: 16,
+                              color: _sortBy == sort && _sortAscending
+                                  ? Theme.of(context).primaryColor
+                                  : null,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(_getSortLabelFor(sort)),
+                          ],
+                        ),
+                      ),
+                    ),
+                    ...ExpenseSortBy.values.map(
+                      (sort) => PopupMenuItem(
+                        value: MapEntry(sort, false),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.arrow_downward,
+                              size: 16,
+                              color: _sortBy == sort && !_sortAscending
+                                  ? Theme.of(context).primaryColor
+                                  : null,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(_getSortLabelFor(sort)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                  onSelected: (value) {
+                    setState(() {
+                      _sortBy = value.key;
+                      _sortAscending = value.value;
+                    });
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Category statistics
+          if (categoryStats.isNotEmpty) ...[
+            const Text(
+              'Category Statistics',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: categoryStats.entries.map((entry) {
+                final category = entry.key;
+                final amount = entry.value;
+                return Chip(
+                  avatar: Icon(category.icon, color: category.color),
+                  label: Text(
+                    '${category.label}: ₹${amount.toStringAsFixed(2)}',
+                  ),
+                  backgroundColor: category.color.withOpacity(0.1),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 16),
+          ],
           if (group.description.isNotEmpty)
             Text(
               group.description,
@@ -788,9 +1291,19 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
             },
           ),
           const SizedBox(height: 16),
-          const Text(
-            'Expenses',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Expenses',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              if (filteredExpenses.length != group.expenses.length)
+                Text(
+                  '${filteredExpenses.length} of ${group.expenses.length}',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+            ],
           ),
           const SizedBox(height: 8),
           if (group.expenses.isEmpty)
@@ -798,71 +1311,102 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
               padding: EdgeInsets.only(top: 16),
               child: Text('No expenses yet. Tap "Add expense" to start.'),
             )
+          else if (filteredExpenses.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 16),
+              child: Text('No expenses match your filters.'),
+            )
           else
-            ...group.expenses.map((e) {
+            ...filteredExpenses.asMap().entries.map((entry) {
+              final index = entry.key;
+              final e = entry.value;
               final payer = group.members
                   .firstWhere((m) => m.id == e.payerId)
                   .name;
-              return Card(
-                margin: const EdgeInsets.only(bottom: 8),
-                child: ListTile(
-                  onTap: () => _openExpenseDetail(e),
-                  onLongPress: () async {
-                    final confirmed =
-                        await showDialog<bool>(
-                          context: context,
-                          builder: (context) => AlertDialog(
-                            title: const Text('Delete expense?'),
-                            content: Text(
-                              'Delete "${e.title}" from this group? This cannot be undone.',
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () =>
-                                    Navigator.of(context).pop(false),
-                                child: const Text('Cancel'),
+              return TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0.0, end: 1.0),
+                duration: Duration(milliseconds: 300 + (index * 50)),
+                curve: Curves.easeOut,
+                builder: (context, value, child) {
+                  return Opacity(
+                    opacity: value,
+                    child: Transform.translate(
+                      offset: Offset(0, 20 * (1 - value)),
+                      child: child,
+                    ),
+                  );
+                },
+                child: Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: ListTile(
+                    onTap: () => _openExpenseDetail(e),
+                    onLongPress: () async {
+                      final confirmed =
+                          await showDialog<bool>(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: const Text('Delete expense?'),
+                              content: Text(
+                                'Delete "${e.title}" from this group? This cannot be undone.',
                               ),
-                              TextButton(
-                                onPressed: () =>
-                                    Navigator.of(context).pop(true),
-                                child: const Text(
-                                  'Delete',
-                                  style: TextStyle(color: Colors.red),
+                              actions: [
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.of(context).pop(false),
+                                  child: const Text('Cancel'),
                                 ),
-                              ),
-                            ],
-                          ),
-                        ) ??
-                        false;
-                    if (!confirmed) return;
-                    final groups = await _storage.loadGroups();
-                    final idx = groups.indexWhere(
-                      (g) => g.id == widget.groupId,
-                    );
-                    if (idx == -1) return;
-                    final g = groups[idx];
-                    final updated = SplitGroup(
-                      id: g.id,
-                      name: g.name,
-                      description: g.description,
-                      members: g.members,
-                      expenses: g.expenses
-                          .where((ex) => ex.id != e.id)
-                          .toList(),
-                      settlements: g.settlements,
-                      createdAt: g.createdAt,
-                    );
-                    groups[idx] = updated;
-                    await _storage.saveGroups(groups);
-                    await _load();
-                  },
-                  title: Text(e.title),
-                  subtitle: Text(
-                    '₹${e.amount.toStringAsFixed(2)} • Paid by $payer',
-                  ),
-                  trailing: Text(
-                    '${e.involvedMemberIds.length} people',
-                    style: const TextStyle(fontSize: 12),
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.of(context).pop(true),
+                                  child: const Text(
+                                    'Delete',
+                                    style: TextStyle(color: Colors.red),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ) ??
+                          false;
+                      if (!confirmed) return;
+                      final groups = await _storage.loadGroups();
+                      final idx = groups.indexWhere(
+                        (g) => g.id == widget.groupId,
+                      );
+                      if (idx == -1) return;
+                      final g = groups[idx];
+                      final updated = SplitGroup(
+                        id: g.id,
+                        name: g.name,
+                        description: g.description,
+                        members: g.members,
+                        expenses: g.expenses
+                            .where((ex) => ex.id != e.id)
+                            .toList(),
+                        settlements: g.settlements,
+                        createdAt: g.createdAt,
+                      );
+                      groups[idx] = updated;
+                      await _storage.saveGroups(groups);
+                      await _load();
+                    },
+                    leading: e.category != null
+                        ? CircleAvatar(
+                            backgroundColor: e.category!.color.withOpacity(0.2),
+                            child: Icon(
+                              e.category!.icon,
+                              color: e.category!.color,
+                              size: 20,
+                            ),
+                          )
+                        : null,
+                    title: Text(e.title),
+                    subtitle: Text(
+                      '₹${e.amount.toStringAsFixed(2)} • Paid by $payer${e.category != null ? ' • ${e.category!.label}' : ''}',
+                    ),
+                    trailing: Text(
+                      '${e.involvedMemberIds.length} people',
+                      style: const TextStyle(fontSize: 12),
+                    ),
                   ),
                 ),
               );
@@ -901,6 +1445,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   String? _selectedPayerId;
   final Set<String> _selectedMemberIds = {};
   SplitMode _splitMode = SplitMode.equal;
+  ExpenseCategory? _selectedCategory;
   final Map<String, TextEditingController> _customAmountControllers = {};
   final Map<String, TextEditingController> _percentControllers = {};
 
@@ -935,6 +1480,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
         _descriptionController.text = editing.description;
         _amountController.text = editing.amount.toStringAsFixed(2);
         _selectedPayerId = editing.payerId;
+        _selectedCategory = editing.category;
         _selectedMemberIds
           ..clear()
           ..addAll(editing.involvedMemberIds);
@@ -1032,6 +1578,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       involvedMemberIds: _selectedMemberIds.toList(),
       createdAt: base?.createdAt ?? DateTime.now(),
       shares: shares,
+      category: _selectedCategory,
     );
 
     final List<Expense> newExpenses;
@@ -1126,6 +1673,37 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                   }
                   return null;
                 },
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Category',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: ExpenseCategory.values.map((category) {
+                  final isSelected = _selectedCategory == category;
+                  return FilterChip(
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(category.icon, size: 16),
+                        const SizedBox(width: 4),
+                        Text(category.label),
+                      ],
+                    ),
+                    selected: isSelected,
+                    selectedColor: category.color.withOpacity(0.2),
+                    checkmarkColor: category.color,
+                    onSelected: (selected) {
+                      setState(() {
+                        _selectedCategory = selected ? category : null;
+                      });
+                    },
+                  );
+                }).toList(),
               ),
               const SizedBox(height: 16),
               const Text(
