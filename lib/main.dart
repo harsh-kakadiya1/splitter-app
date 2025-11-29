@@ -1,0 +1,1564 @@
+import 'dart:convert';
+
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const SplitterApp());
+}
+
+class SplitterApp extends StatelessWidget {
+  const SplitterApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Smart Splitter',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
+        useMaterial3: true,
+      ),
+      home: const HomeScreen(),
+    );
+  }
+}
+
+// MODELS
+
+class Member {
+  Member({required this.id, required this.name});
+
+  final String id;
+  final String name;
+
+  factory Member.fromJson(Map<String, dynamic> json) =>
+      Member(id: json['id'] as String, name: json['name'] as String);
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name};
+}
+
+class Expense {
+  Expense({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.amount,
+    required this.payerId,
+    required this.involvedMemberIds,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String title;
+  final String description;
+  final double amount;
+  final String payerId;
+  final List<String> involvedMemberIds;
+  final DateTime createdAt;
+
+  factory Expense.fromJson(Map<String, dynamic> json) => Expense(
+    id: json['id'] as String,
+    title: json['title'] as String,
+    description: json['description'] as String? ?? '',
+    amount: (json['amount'] as num).toDouble(),
+    payerId: json['payerId'] as String,
+    involvedMemberIds: (json['involvedMemberIds'] as List<dynamic>)
+        .map((e) => e as String)
+        .toList(),
+    createdAt: DateTime.parse(json['createdAt'] as String),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'title': title,
+    'description': description,
+    'amount': amount,
+    'payerId': payerId,
+    'involvedMemberIds': involvedMemberIds,
+    'createdAt': createdAt.toIso8601String(),
+  };
+}
+
+class Settlement {
+  Settlement({
+    required this.id,
+    required this.fromMemberId,
+    required this.toMemberId,
+    required this.amount,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String fromMemberId;
+  final String toMemberId;
+  final double amount;
+  final DateTime createdAt;
+
+  factory Settlement.fromJson(Map<String, dynamic> json) => Settlement(
+    id: json['id'] as String,
+    fromMemberId: json['fromMemberId'] as String,
+    toMemberId: json['toMemberId'] as String,
+    amount: (json['amount'] as num).toDouble(),
+    createdAt: DateTime.parse(json['createdAt'] as String),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'fromMemberId': fromMemberId,
+    'toMemberId': toMemberId,
+    'amount': amount,
+    'createdAt': createdAt.toIso8601String(),
+  };
+}
+
+class SplitGroup {
+  SplitGroup({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.members,
+    required this.expenses,
+    required this.settlements,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String name;
+  final String description;
+  final List<Member> members;
+  final List<Expense> expenses;
+  final List<Settlement> settlements;
+  final DateTime createdAt;
+
+  factory SplitGroup.fromJson(Map<String, dynamic> json) => SplitGroup(
+    id: json['id'] as String,
+    name: json['name'] as String,
+    description: json['description'] as String? ?? '',
+    members: (json['members'] as List<dynamic>)
+        .map((e) => Member.fromJson(e as Map<String, dynamic>))
+        .toList(),
+    expenses: (json['expenses'] as List<dynamic>)
+        .map((e) => Expense.fromJson(e as Map<String, dynamic>))
+        .toList(),
+    settlements: (json['settlements'] as List<dynamic>)
+        .map((e) => Settlement.fromJson(e as Map<String, dynamic>))
+        .toList(),
+    createdAt: DateTime.parse(json['createdAt'] as String),
+  );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'description': description,
+    'members': members.map((m) => m.toJson()).toList(),
+    'expenses': expenses.map((e) => e.toJson()).toList(),
+    'settlements': settlements.map((s) => s.toJson()).toList(),
+    'createdAt': createdAt.toIso8601String(),
+  };
+}
+
+// SIMPLE LOCAL STORAGE SERVICE
+
+class StorageService {
+  static const _groupsKey = 'split_groups_v1';
+
+  Future<List<SplitGroup>> loadGroups() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_groupsKey);
+    if (raw == null || raw.isEmpty) return [];
+    final list = jsonDecode(raw) as List<dynamic>;
+    return list
+        .map((e) => SplitGroup.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<void> saveGroups(List<SplitGroup> groups) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonList = groups.map((g) => g.toJson()).toList();
+    await prefs.setString(_groupsKey, jsonEncode(jsonList));
+  }
+}
+
+final _storage = StorageService();
+
+String _generateId() => DateTime.now().microsecondsSinceEpoch.toString();
+
+// HOME SCREEN
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  late Future<List<SplitGroup>> _groupsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _groupsFuture = _storage.loadGroups();
+  }
+
+  Future<void> _reload() async {
+    setState(() {
+      _groupsFuture = _storage.loadGroups();
+    });
+  }
+
+  Future<void> _createOrEditGroup([SplitGroup? group]) async {
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => EditGroupScreen(existing: group)));
+    await _reload();
+  }
+
+  Future<void> _openGroup(SplitGroup group) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => GroupDetailScreen(groupId: group.id)),
+    );
+    await _reload();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Your Trips & Splits'),
+        centerTitle: true,
+      ),
+      body: FutureBuilder<List<SplitGroup>>(
+        future: _groupsFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final groups = snapshot.data ?? [];
+          if (groups.isEmpty) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.group, size: 80, color: Colors.teal.shade300),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'No splits yet',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Create your first trip/expense group and start splitting smartly.',
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+          return RefreshIndicator(
+            onRefresh: _reload,
+            child: ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: groups.length,
+              itemBuilder: (context, index) {
+                final group = groups[index];
+                return Card(
+                  elevation: 2,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: ListTile(
+                    onTap: () => _openGroup(group),
+                    title: Text(
+                      group.name,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Text(
+                      group.description.isEmpty
+                          ? '${group.members.length} members'
+                          : group.description,
+                    ),
+                    trailing: PopupMenuButton<String>(
+                      onSelected: (value) async {
+                        if (value == 'edit') {
+                          await _createOrEditGroup(group);
+                        } else if (value == 'delete') {
+                          final prefsGroups = await _storage.loadGroups();
+                          prefsGroups.removeWhere(
+                            (element) => element.id == group.id,
+                          );
+                          await _storage.saveGroups(prefsGroups);
+                          await _reload();
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Text('Edit group & members'),
+                        ),
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Text('Delete group'),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _createOrEditGroup(),
+        icon: const Icon(Icons.add),
+        label: const Text('Create split/trip'),
+      ),
+    );
+  }
+}
+
+// CREATE / EDIT GROUP SCREEN
+
+class EditGroupScreen extends StatefulWidget {
+  const EditGroupScreen({super.key, this.existing});
+
+  final SplitGroup? existing;
+
+  @override
+  State<EditGroupScreen> createState() => _EditGroupScreenState();
+}
+
+class _EditGroupScreenState extends State<EditGroupScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _descriptionController = TextEditingController();
+  final _memberNameController = TextEditingController();
+  final List<Member> _members = [];
+
+  @override
+  void initState() {
+    super.initState();
+    final existing = widget.existing;
+    if (existing != null) {
+      _nameController.text = existing.name;
+      _descriptionController.text = existing.description;
+      _members.addAll(existing.members);
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _descriptionController.dispose();
+    _memberNameController.dispose();
+    super.dispose();
+  }
+
+  void _addMember() {
+    final name = _memberNameController.text.trim();
+    if (name.isEmpty) return;
+    setState(() {
+      _members.add(Member(id: _generateId(), name: name));
+      _memberNameController.clear();
+    });
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate() || _members.isEmpty) return;
+    final allGroups = await _storage.loadGroups();
+    if (widget.existing == null) {
+      final newGroup = SplitGroup(
+        id: _generateId(),
+        name: _nameController.text.trim(),
+        description: _descriptionController.text.trim(),
+        members: List<Member>.from(_members),
+        expenses: const [],
+        settlements: const [],
+        createdAt: DateTime.now(),
+      );
+      allGroups.add(newGroup);
+    } else {
+      final idx = allGroups.indexWhere(
+        (element) => element.id == widget.existing!.id,
+      );
+      if (idx != -1) {
+        final existing = allGroups[idx];
+        allGroups[idx] = SplitGroup(
+          id: existing.id,
+          name: _nameController.text.trim(),
+          description: _descriptionController.text.trim(),
+          members: List<Member>.from(_members),
+          expenses: existing.expenses,
+          settlements: existing.settlements,
+          createdAt: existing.createdAt,
+        );
+      }
+    }
+    await _storage.saveGroups(allGroups);
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isEditing = widget.existing != null;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(isEditing ? 'Edit split' : 'Create new split'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            children: [
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Name',
+                  hintText: 'Goa Trip, Office Lunch, Room Rent...',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) =>
+                    value == null || value.trim().isEmpty ? 'Required' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _descriptionController,
+                decoration: const InputDecoration(
+                  labelText: 'Description (optional)',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 2,
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Members',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _memberNameController,
+                      decoration: const InputDecoration(
+                        hintText: 'Add member name',
+                        border: OutlineInputBorder(),
+                      ),
+                      onSubmitted: (_) => _addMember(),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: _addMember,
+                    icon: const Icon(Icons.add_circle, color: Colors.teal),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: _members
+                    .map(
+                      (m) => Chip(
+                        label: Text(m.name),
+                        onDeleted: () {
+                          setState(() {
+                            _members.remove(m);
+                          });
+                        },
+                      ),
+                    )
+                    .toList(),
+              ),
+              const SizedBox(height: 24),
+              FilledButton(
+                onPressed: _save,
+                child: Text(isEditing ? 'Save changes' : 'Create split'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// GROUP DETAIL SCREEN
+
+class GroupDetailScreen extends StatefulWidget {
+  const GroupDetailScreen({super.key, required this.groupId});
+
+  final String groupId;
+
+  @override
+  State<GroupDetailScreen> createState() => _GroupDetailScreenState();
+}
+
+class _GroupDetailScreenState extends State<GroupDetailScreen> {
+  SplitGroup? _group;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final groups = await _storage.loadGroups();
+    setState(() {
+      _group = groups.firstWhere((g) => g.id == widget.groupId);
+    });
+  }
+
+  Future<void> _addExpense() async {
+    if (_group == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AddExpenseScreen(groupId: widget.groupId),
+      ),
+    );
+    await _load();
+  }
+
+  Future<void> _openSummary() async {
+    if (_group == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => SummaryScreen(groupId: widget.groupId)),
+    );
+    await _load();
+  }
+
+  Future<void> _openSettle() async {
+    if (_group == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => SettleScreen(groupId: widget.groupId)),
+    );
+    await _load();
+  }
+
+  Future<void> _openExpenseDetail(Expense expense) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            ExpenseDetailScreen(groupId: widget.groupId, expenseId: expense.id),
+      ),
+    );
+    await _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final group = _group;
+    if (group == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(group.name),
+        actions: [
+          IconButton(
+            tooltip: 'Summary',
+            icon: const Icon(Icons.summarize_outlined),
+            onPressed: _openSummary,
+          ),
+          IconButton(
+            tooltip: 'Settle up',
+            icon: const Icon(Icons.check_circle_outline),
+            onPressed: _openSettle,
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          if (group.description.isNotEmpty)
+            Text(
+              group.description,
+              style: TextStyle(color: Colors.grey.shade700),
+            ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: -8,
+            children: group.members
+                .map(
+                  (m) => Chip(
+                    label: Text(m.name),
+                    avatar: const Icon(Icons.person, size: 16),
+                  ),
+                )
+                .toList(),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Expenses',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              TextButton.icon(
+                onPressed: _addExpense,
+                icon: const Icon(Icons.add),
+                label: const Text('Add expense'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (group.expenses.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 16),
+              child: Text('No expenses yet. Tap "Add expense" to start.'),
+            )
+          else
+            ...group.expenses.map((e) {
+              final payer = group.members
+                  .firstWhere((m) => m.id == e.payerId)
+                  .name;
+              return Card(
+                margin: const EdgeInsets.only(bottom: 8),
+                child: ListTile(
+                  onTap: () => _openExpenseDetail(e),
+                  title: Text(e.title),
+                  subtitle: Text(
+                    '₹${e.amount.toStringAsFixed(2)} • Paid by $payer',
+                  ),
+                  trailing: Text(
+                    '${e.involvedMemberIds.length} people',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              );
+            }),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _addExpense,
+        icon: const Icon(Icons.add),
+        label: const Text('New expense'),
+      ),
+    );
+  }
+}
+
+// ADD EXPENSE SCREEN
+
+class AddExpenseScreen extends StatefulWidget {
+  const AddExpenseScreen({super.key, required this.groupId});
+
+  final String groupId;
+
+  @override
+  State<AddExpenseScreen> createState() => _AddExpenseScreenState();
+}
+
+class _AddExpenseScreenState extends State<AddExpenseScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _titleController = TextEditingController();
+  final _descriptionController = TextEditingController();
+  final _amountController = TextEditingController();
+
+  SplitGroup? _group;
+  String? _selectedPayerId;
+  final Set<String> _selectedMemberIds = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final groups = await _storage.loadGroups();
+    final group = groups.firstWhere((g) => g.id == widget.groupId);
+    setState(() {
+      _group = group;
+      if (group.members.isNotEmpty) {
+        _selectedPayerId = group.members.first.id;
+        _selectedMemberIds
+          ..clear()
+          ..addAll(group.members.map((e) => e.id));
+      }
+    });
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    final group = _group;
+    if (group == null ||
+        _selectedPayerId == null ||
+        _selectedMemberIds.isEmpty) {
+      return;
+    }
+    final amount = double.tryParse(_amountController.text.trim()) ?? 0;
+    if (amount <= 0) return;
+    final allGroups = await _storage.loadGroups();
+    final idx = allGroups.indexWhere((g) => g.id == group.id);
+    if (idx == -1) return;
+
+    final newExpense = Expense(
+      id: _generateId(),
+      title: _titleController.text.trim().isEmpty
+          ? 'Expense'
+          : _titleController.text.trim(),
+      description: _descriptionController.text.trim(),
+      amount: amount,
+      payerId: _selectedPayerId!,
+      involvedMemberIds: _selectedMemberIds.toList(),
+      createdAt: DateTime.now(),
+    );
+
+    final updatedGroup = SplitGroup(
+      id: group.id,
+      name: group.name,
+      description: group.description,
+      members: group.members,
+      expenses: [...group.expenses, newExpense],
+      settlements: group.settlements,
+      createdAt: group.createdAt,
+    );
+
+    allGroups[idx] = updatedGroup;
+    await _storage.saveGroups(allGroups);
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    _descriptionController.dispose();
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final group = _group;
+    if (group == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Add expense')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            children: [
+              TextFormField(
+                controller: _titleController,
+                decoration: const InputDecoration(
+                  labelText: 'Expense name',
+                  hintText: 'Dinner, Taxi, Hotel...',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _descriptionController,
+                decoration: const InputDecoration(
+                  labelText: 'Description (optional)',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 2,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _amountController,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Amount',
+                  prefixText: '₹ ',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) {
+                  final v = value?.trim() ?? '';
+                  if (v.isEmpty) return 'Amount required';
+                  final parsed = double.tryParse(v);
+                  if (parsed == null || parsed <= 0) {
+                    return 'Enter valid amount';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Who paid?',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: _selectedPayerId,
+                items: group.members
+                    .map(
+                      (m) => DropdownMenuItem(value: m.id, child: Text(m.name)),
+                    )
+                    .toList(),
+                onChanged: (val) {
+                  setState(() {
+                    _selectedPayerId = val;
+                  });
+                },
+                decoration: const InputDecoration(border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Who is in this expense?',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: group.members.map((m) {
+                  final selected = _selectedMemberIds.contains(m.id);
+                  return FilterChip(
+                    label: Text(m.name),
+                    selected: selected,
+                    onSelected: (val) {
+                      setState(() {
+                        if (val) {
+                          _selectedMemberIds.add(m.id);
+                        } else {
+                          _selectedMemberIds.remove(m.id);
+                        }
+                      });
+                    },
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 24),
+              FilledButton(onPressed: _save, child: const Text('Save expense')),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// EXPENSE DETAIL SCREEN
+
+class ExpenseDetailScreen extends StatelessWidget {
+  const ExpenseDetailScreen({
+    super.key,
+    required this.groupId,
+    required this.expenseId,
+  });
+
+  final String groupId;
+  final String expenseId;
+
+  String _formatDateTime(DateTime dt) {
+    final local = dt.toLocal();
+    final two = (int n) => n.toString().padLeft(2, '0');
+    final date = '${two(local.day)}/${two(local.month)}/${local.year}';
+    final time = '${two(local.hour)}:${two(local.minute)}';
+    return '$date  $time';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<SplitGroup>>(
+      future: _storage.loadGroups(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final groups = snapshot.data ?? [];
+        final group = groups.firstWhere(
+          (g) => g.id == groupId,
+          orElse: () => SplitGroup(
+            id: '',
+            name: '',
+            description: '',
+            members: const [],
+            expenses: const [],
+            settlements: const [],
+            createdAt: DateTime.now(),
+          ),
+        );
+        final expense = group.expenses.firstWhere(
+          (e) => e.id == expenseId,
+          orElse: () => Expense(
+            id: '',
+            title: 'Expense not found',
+            description: '',
+            amount: 0,
+            payerId: '',
+            involvedMemberIds: const [],
+            createdAt: DateTime.now(),
+          ),
+        );
+
+        if (group.id.isEmpty || expense.id.isEmpty) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Expense details')),
+            body: const Center(child: Text('Expense not found.')),
+          );
+        }
+
+        final payer = group.members.firstWhere(
+          (m) => m.id == expense.payerId,
+          orElse: () => group.members.first,
+        );
+        final participants = group.members
+            .where((m) => expense.involvedMemberIds.contains(m.id))
+            .toList();
+
+        return Scaffold(
+          appBar: AppBar(title: const Text('Expense details')),
+          body: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  expense.title,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Amount: ₹${expense.amount.toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 16),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Paid by: ${payer.name}',
+                  style: const TextStyle(fontSize: 16),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Created: ${_formatDateTime(expense.createdAt)}',
+                  style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+                ),
+                if (expense.description.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Description',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(expense.description),
+                ],
+                const SizedBox(height: 16),
+                const Text(
+                  'Participants',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                if (participants.isEmpty)
+                  const Text('No participants recorded.')
+                else
+                  Wrap(
+                    spacing: 8,
+                    children: participants
+                        .map(
+                          (m) => Chip(
+                            label: Text(m.name),
+                            avatar: const Icon(Icons.person, size: 16),
+                          ),
+                        )
+                        .toList(),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// SUMMARY LOGIC
+
+class MemberBalance {
+  MemberBalance({required this.member, required this.balance});
+
+  final Member member;
+  double balance; // >0 = owes, <0 = should receive
+}
+
+List<MemberBalance> computeBalances(SplitGroup group) {
+  final paid = <String, double>{};
+  final owes = <String, double>{};
+
+  for (final m in group.members) {
+    paid[m.id] = 0;
+    owes[m.id] = 0;
+  }
+
+  for (final e in group.expenses) {
+    if (e.involvedMemberIds.isEmpty) continue;
+    final share = e.amount / e.involvedMemberIds.length;
+    paid[e.payerId] = (paid[e.payerId] ?? 0) + e.amount;
+    for (final id in e.involvedMemberIds) {
+      owes[id] = (owes[id] ?? 0) + share;
+    }
+  }
+
+  // Apply manual settlements (who paid whom how much)
+  for (final s in group.settlements) {
+    // fromMember gave cash to toMember
+    paid[s.fromMemberId] = (paid[s.fromMemberId] ?? 0) + s.amount;
+    owes[s.toMemberId] = (owes[s.toMemberId] ?? 0) + s.amount;
+  }
+
+  final balances = <MemberBalance>[];
+  for (final m in group.members) {
+    final b = (owes[m.id] ?? 0) - (paid[m.id] ?? 0);
+    if (b.abs() < 0.01) {
+      balances.add(MemberBalance(member: m, balance: 0));
+    } else {
+      balances.add(MemberBalance(member: m, balance: b));
+    }
+  }
+  return balances;
+}
+
+class Transfer {
+  Transfer({required this.from, required this.to, required this.amount});
+
+  final Member from;
+  final Member to;
+  final double amount;
+}
+
+class ExpenseTransfer {
+  ExpenseTransfer({
+    required this.expense,
+    required this.from,
+    required this.to,
+    required this.amount,
+  });
+
+  final Expense expense;
+  final Member from;
+  final Member to;
+  final double amount;
+}
+
+enum SummaryMode { overall, perExpense }
+
+List<Transfer> computeSuggestedTransfers(List<MemberBalance> balances) {
+  final debtors = <MemberBalance>[];
+  final creditors = <MemberBalance>[];
+
+  for (final b in balances) {
+    if (b.balance > 0.01) {
+      debtors.add(MemberBalance(member: b.member, balance: b.balance));
+    } else if (b.balance < -0.01) {
+      creditors.add(MemberBalance(member: b.member, balance: b.balance));
+    }
+  }
+
+  debtors.sort((a, b) => b.balance.compareTo(a.balance));
+  creditors.sort(
+    (a, b) => a.balance.compareTo(b.balance),
+  ); // most negative first
+
+  final transfers = <Transfer>[];
+
+  int i = 0;
+  int j = 0;
+  while (i < debtors.length && j < creditors.length) {
+    final debtor = debtors[i];
+    final creditor = creditors[j];
+    final amount = debtor.balance.min(-creditor.balance);
+
+    transfers.add(
+      Transfer(from: debtor.member, to: creditor.member, amount: amount),
+    );
+
+    debtor.balance -= amount;
+    creditor.balance += amount;
+
+    if (debtor.balance <= 0.01) i++;
+    if (creditor.balance >= -0.01) j++;
+  }
+
+  return transfers;
+}
+
+List<ExpenseTransfer> computePerExpenseTransfers(SplitGroup group) {
+  final result = <ExpenseTransfer>[];
+  for (final e in group.expenses) {
+    if (e.involvedMemberIds.isEmpty) continue;
+    final payer = group.members.firstWhere(
+      (m) => m.id == e.payerId,
+      orElse: () => group.members.first,
+    );
+    final share = e.amount / e.involvedMemberIds.length;
+
+    for (final id in e.involvedMemberIds) {
+      if (id == payer.id) continue;
+      final from = group.members.firstWhere(
+        (m) => m.id == id,
+        orElse: () => payer,
+      );
+      result.add(
+        ExpenseTransfer(expense: e, from: from, to: payer, amount: share),
+      );
+    }
+  }
+  return result;
+}
+
+extension on double {
+  double min(double other) => this < other ? this : other;
+}
+
+// SUMMARY SCREEN
+
+class SummaryScreen extends StatefulWidget {
+  const SummaryScreen({super.key, required this.groupId});
+
+  final String groupId;
+
+  @override
+  State<SummaryScreen> createState() => _SummaryScreenState();
+}
+
+class _SummaryScreenState extends State<SummaryScreen> {
+  SplitGroup? _group;
+  SummaryMode _mode = SummaryMode.overall;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final groups = await _storage.loadGroups();
+    setState(() {
+      _group = groups.firstWhere((g) => g.id == widget.groupId);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final group = _group;
+    if (group == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    final balances = computeBalances(group);
+    final transfers = computeSuggestedTransfers(balances);
+    final expenseTransfers = computePerExpenseTransfers(group);
+    final transfersByExpense = <String, List<ExpenseTransfer>>{};
+    for (final t in expenseTransfers) {
+      transfersByExpense.putIfAbsent(t.expense.id, () => []).add(t);
+    }
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Summary')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          SegmentedButton<SummaryMode>(
+            segments: const [
+              ButtonSegment(
+                value: SummaryMode.overall,
+                label: Text('Overall'),
+                icon: Icon(Icons.account_balance_wallet_outlined),
+              ),
+              ButtonSegment(
+                value: SummaryMode.perExpense,
+                label: Text('By expense'),
+                icon: Icon(Icons.receipt_long_outlined),
+              ),
+            ],
+            selected: {_mode},
+            onSelectionChanged: (selection) {
+              if (selection.isEmpty) return;
+              setState(() {
+                _mode = selection.first;
+              });
+            },
+          ),
+          const SizedBox(height: 16),
+          if (_mode == SummaryMode.overall) ...[
+            const Text(
+              'Member balances',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            ...balances.map((b) {
+              final amount = b.balance.abs();
+              String text;
+              Color color;
+              if (b.balance > 0.01) {
+                text =
+                    '${b.member.name} should pay ₹${amount.toStringAsFixed(2)}';
+                color = Colors.red;
+              } else if (b.balance < -0.01) {
+                text =
+                    '${b.member.name} will receive ₹${amount.toStringAsFixed(2)}';
+                color = Colors.green;
+              } else {
+                text = '${b.member.name} is settled up';
+                color = Colors.grey;
+              }
+              return ListTile(
+                dense: true,
+                title: Text(text, style: TextStyle(color: color)),
+              );
+            }),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 8),
+            const Text(
+              'Who should pay whom',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            if (transfers.isEmpty)
+              const Text('Everyone is settled up.')
+            else
+              ...transfers.map(
+                (t) => ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.swap_horiz),
+                  title: Text(
+                    '${t.from.name} → ${t.to.name}: ₹${t.amount.toStringAsFixed(2)}',
+                  ),
+                ),
+              ),
+            const SizedBox(height: 16),
+            const Divider(),
+            const SizedBox(height: 8),
+            const Text(
+              'Per member summary',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            ...group.members.map((m) {
+              final balance = balances
+                  .firstWhere((b) => b.member.id == m.id)
+                  .balance;
+              final pays = transfers.where((t) => t.from.id == m.id).toList();
+              final receives = transfers.where((t) => t.to.id == m.id).toList();
+
+              final List<Widget> lines = [];
+
+              if (balance.abs() < 0.01) {
+                lines.add(
+                  const Text(
+                    'Settled up with everyone.',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                );
+              } else if (balance > 0.01) {
+                lines.add(
+                  Text(
+                    'Total to pay: ₹${balance.toStringAsFixed(2)}',
+                    style: const TextStyle(color: Colors.red),
+                  ),
+                );
+              } else {
+                lines.add(
+                  Text(
+                    'Total to receive: ₹${(-balance).toStringAsFixed(2)}',
+                    style: const TextStyle(color: Colors.green),
+                  ),
+                );
+              }
+
+              for (final t in pays) {
+                lines.add(
+                  Text('Pay ${t.to.name} ₹${t.amount.toStringAsFixed(2)}'),
+                );
+              }
+              for (final t in receives) {
+                lines.add(
+                  Text(
+                    'Receive from ${t.from.name} ₹${t.amount.toStringAsFixed(2)}',
+                  ),
+                );
+              }
+
+              return Card(
+                margin: const EdgeInsets.only(bottom: 8),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        m.name,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 4),
+                      ...lines,
+                    ],
+                  ),
+                ),
+              );
+            }),
+          ] else ...[
+            const Text(
+              'Expense-wise (to payer)',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            if (group.expenses.isEmpty)
+              const Text('No expenses yet.')
+            else
+              ...group.expenses.map((e) {
+                final payerName = group.members
+                    .firstWhere((m) => m.id == e.payerId)
+                    .name;
+                final list = transfersByExpense[e.id] ?? [];
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          e.title,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        Text(
+                          'Total: ₹${e.amount.toStringAsFixed(2)} • Paid by $payerName',
+                        ),
+                        const SizedBox(height: 4),
+                        if (list.isEmpty)
+                          const Text(
+                            'No participants for this expense.',
+                            style: TextStyle(color: Colors.grey),
+                          )
+                        else
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: list
+                                .map(
+                                  (t) => Text(
+                                    '${t.from.name} → ${t.to.name}: ₹${t.amount.toStringAsFixed(2)}',
+                                  ),
+                                )
+                                .toList(),
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              }),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// SETTLE SCREEN
+
+class SettleScreen extends StatefulWidget {
+  const SettleScreen({super.key, required this.groupId});
+
+  final String groupId;
+
+  @override
+  State<SettleScreen> createState() => _SettleScreenState();
+}
+
+class _SettleScreenState extends State<SettleScreen> {
+  SplitGroup? _group;
+  String? _fromId;
+  String? _toId;
+  final _amountController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final groups = await _storage.loadGroups();
+    setState(() {
+      _group = groups.firstWhere((g) => g.id == widget.groupId);
+    });
+  }
+
+  Future<void> _saveSettlement() async {
+    final group = _group;
+    if (group == null || _fromId == null || _toId == null) return;
+    if (_fromId == _toId) return;
+    final amount = double.tryParse(_amountController.text.trim()) ?? 0;
+    if (amount <= 0) return;
+
+    final allGroups = await _storage.loadGroups();
+    final idx = allGroups.indexWhere((g) => g.id == group.id);
+    if (idx == -1) return;
+
+    final settlement = Settlement(
+      id: _generateId(),
+      fromMemberId: _fromId!,
+      toMemberId: _toId!,
+      amount: amount,
+      createdAt: DateTime.now(),
+    );
+
+    final updatedGroup = SplitGroup(
+      id: group.id,
+      name: group.name,
+      description: group.description,
+      members: group.members,
+      expenses: group.expenses,
+      settlements: [...group.settlements, settlement],
+      createdAt: group.createdAt,
+    );
+
+    allGroups[idx] = updatedGroup;
+    await _storage.saveGroups(allGroups);
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final group = _group;
+    if (group == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Record settlement')),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Who paid whom?',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _fromId,
+                    decoration: const InputDecoration(
+                      labelText: 'From',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: group.members
+                        .map(
+                          (m) => DropdownMenuItem(
+                            value: m.id,
+                            child: Text(m.name),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (val) {
+                      setState(() {
+                        _fromId = val;
+                      });
+                    },
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _toId,
+                    decoration: const InputDecoration(
+                      labelText: 'To',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: group.members
+                        .map(
+                          (m) => DropdownMenuItem(
+                            value: m.id,
+                            child: Text(m.name),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (val) {
+                      setState(() {
+                        _toId = val;
+                      });
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _amountController,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Amount',
+                prefixText: '₹ ',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 24),
+            FilledButton(
+              onPressed: _saveSettlement,
+              child: const Text('Save settlement'),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Previous settlements',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: group.settlements.isEmpty
+                  ? const Text('No manual settlements recorded yet.')
+                  : ListView.builder(
+                      itemCount: group.settlements.length,
+                      itemBuilder: (context, index) {
+                        final s = group.settlements[index];
+                        final from = group.members
+                            .firstWhere((m) => m.id == s.fromMemberId)
+                            .name;
+                        final to = group.members
+                            .firstWhere((m) => m.id == s.toMemberId)
+                            .name;
+                        return ListTile(
+                          dense: true,
+                          leading: const Icon(Icons.payments_outlined),
+                          title: Text(
+                            '$from → $to: ₹${s.amount.toStringAsFixed(2)}',
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
