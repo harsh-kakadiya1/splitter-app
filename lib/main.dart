@@ -656,9 +656,10 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
 // ADD EXPENSE SCREEN
 
 class AddExpenseScreen extends StatefulWidget {
-  const AddExpenseScreen({super.key, required this.groupId});
+  const AddExpenseScreen({super.key, required this.groupId, this.expenseId});
 
   final String groupId;
+  final String? expenseId;
 
   @override
   State<AddExpenseScreen> createState() => _AddExpenseScreenState();
@@ -671,6 +672,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   final _amountController = TextEditingController();
 
   SplitGroup? _group;
+  Expense? _editingExpense;
   String? _selectedPayerId;
   final Set<String> _selectedMemberIds = {};
 
@@ -683,9 +685,25 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   Future<void> _load() async {
     final groups = await _storage.loadGroups();
     final group = groups.firstWhere((g) => g.id == widget.groupId);
+    Expense? editing;
+    if (widget.expenseId != null) {
+      editing = group.expenses.cast<Expense?>().firstWhere(
+        (e) => e?.id == widget.expenseId,
+        orElse: () => null,
+      );
+    }
     setState(() {
       _group = group;
-      if (group.members.isNotEmpty) {
+      _editingExpense = editing;
+      if (editing != null) {
+        _titleController.text = editing.title;
+        _descriptionController.text = editing.description;
+        _amountController.text = editing.amount.toStringAsFixed(2);
+        _selectedPayerId = editing.payerId;
+        _selectedMemberIds
+          ..clear()
+          ..addAll(editing.involvedMemberIds);
+      } else if (group.members.isNotEmpty) {
         _selectedPayerId = group.members.first.id;
         _selectedMemberIds
           ..clear()
@@ -708,8 +726,9 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     final idx = allGroups.indexWhere((g) => g.id == group.id);
     if (idx == -1) return;
 
-    final newExpense = Expense(
-      id: _generateId(),
+    final base = _editingExpense;
+    final updatedExpense = Expense(
+      id: base?.id ?? _generateId(),
       title: _titleController.text.trim().isEmpty
           ? 'Expense'
           : _titleController.text.trim(),
@@ -717,15 +736,24 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       amount: amount,
       payerId: _selectedPayerId!,
       involvedMemberIds: _selectedMemberIds.toList(),
-      createdAt: DateTime.now(),
+      createdAt: base?.createdAt ?? DateTime.now(),
     );
+
+    final List<Expense> newExpenses;
+    if (base == null) {
+      newExpenses = [...group.expenses, updatedExpense];
+    } else {
+      newExpenses = group.expenses
+          .map((e) => e.id == base.id ? updatedExpense : e)
+          .toList();
+    }
 
     final updatedGroup = SplitGroup(
       id: group.id,
       name: group.name,
       description: group.description,
       members: group.members,
-      expenses: [...group.expenses, newExpense],
+      expenses: newExpenses,
       settlements: group.settlements,
       createdAt: group.createdAt,
     );
@@ -750,8 +778,10 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
+    final isEditing = _editingExpense != null;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Add expense')),
+      appBar: AppBar(title: Text(isEditing ? 'Edit expense' : 'Add expense')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(
@@ -842,7 +872,10 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                 }).toList(),
               ),
               const SizedBox(height: 24),
-              FilledButton(onPressed: _save, child: const Text('Save expense')),
+              FilledButton(
+                onPressed: _save,
+                child: Text(isEditing ? 'Save changes' : 'Save expense'),
+              ),
             ],
           ),
         ),
@@ -923,7 +956,24 @@ class ExpenseDetailScreen extends StatelessWidget {
             .toList();
 
         return Scaffold(
-          appBar: AppBar(title: const Text('Expense details')),
+          appBar: AppBar(
+            title: const Text('Expense details'),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.edit),
+                onPressed: () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => AddExpenseScreen(
+                        groupId: group.id,
+                        expenseId: expense.id,
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ],
+          ),
           body: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
