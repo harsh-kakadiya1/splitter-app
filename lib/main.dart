@@ -3,8 +3,15 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
+final ValueNotifier<ThemeMode> _themeModeNotifier = ValueNotifier<ThemeMode>(
+  ThemeMode.light,
+);
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  final prefs = await SharedPreferences.getInstance();
+  final isDark = prefs.getBool('is_dark_theme') ?? false;
+  _themeModeNotifier.value = isDark ? ThemeMode.dark : ThemeMode.light;
   runApp(const SplitterApp());
 }
 
@@ -13,14 +20,28 @@ class SplitterApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Smart Splitter',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
-        useMaterial3: true,
-      ),
-      home: const HomeScreen(),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: _themeModeNotifier,
+      builder: (context, mode, _) {
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'Smart Splitter',
+          theme: ThemeData(
+            colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
+            useMaterial3: true,
+            brightness: Brightness.light,
+          ),
+          darkTheme: ThemeData(
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: Colors.teal,
+              brightness: Brightness.dark,
+            ),
+            useMaterial3: true,
+          ),
+          themeMode: mode,
+          home: const HomeScreen(),
+        );
+      },
     );
   }
 }
@@ -48,6 +69,7 @@ class Expense {
     required this.payerId,
     required this.involvedMemberIds,
     required this.createdAt,
+    this.shares,
   });
 
   final String id;
@@ -57,6 +79,7 @@ class Expense {
   final String payerId;
   final List<String> involvedMemberIds;
   final DateTime createdAt;
+  final Map<String, double>? shares; // optional per-member share (amount)
 
   factory Expense.fromJson(Map<String, dynamic> json) => Expense(
     id: json['id'] as String,
@@ -68,6 +91,9 @@ class Expense {
         .map((e) => e as String)
         .toList(),
     createdAt: DateTime.parse(json['createdAt'] as String),
+    shares: (json['shares'] as Map<String, dynamic>?)?.map(
+      (key, value) => MapEntry(key, (value as num).toDouble()),
+    ),
   );
 
   Map<String, dynamic> toJson() => {
@@ -78,6 +104,7 @@ class Expense {
     'payerId': payerId,
     'involvedMemberIds': involvedMemberIds,
     'createdAt': createdAt.toIso8601String(),
+    if (shares != null) 'shares': shares,
   };
 }
 
@@ -229,6 +256,25 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('Your Trips & Splits'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            tooltip: 'Toggle dark mode',
+            icon: ValueListenableBuilder<ThemeMode>(
+              valueListenable: _themeModeNotifier,
+              builder: (context, mode, _) {
+                final isDark = mode == ThemeMode.dark;
+                return Icon(isDark ? Icons.dark_mode : Icons.light_mode);
+              },
+            ),
+            onPressed: () async {
+              final prefs = await SharedPreferences.getInstance();
+              final isDark = _themeModeNotifier.value == ThemeMode.dark;
+              final newMode = isDark ? ThemeMode.light : ThemeMode.dark;
+              _themeModeNotifier.value = newMode;
+              await prefs.setBool('is_dark_theme', newMode == ThemeMode.dark);
+            },
+          ),
+        ],
       ),
       body: FutureBuilder<List<SplitGroup>>(
         future: _groupsFuture,
@@ -292,6 +338,33 @@ class _HomeScreenState extends State<HomeScreen> {
                         if (value == 'edit') {
                           await _createOrEditGroup(group);
                         } else if (value == 'delete') {
+                          final confirmed =
+                              await showDialog<bool>(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('Delete group?'),
+                                  content: Text(
+                                    'This will remove "${group.name}" and all its expenses. This cannot be undone.',
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.of(context).pop(false),
+                                      child: const Text('Cancel'),
+                                    ),
+                                    TextButton(
+                                      onPressed: () =>
+                                          Navigator.of(context).pop(true),
+                                      child: const Text(
+                                        'Delete',
+                                        style: TextStyle(color: Colors.red),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ) ??
+                              false;
+                          if (!confirmed) return;
                           final prefsGroups = await _storage.loadGroups();
                           prefsGroups.removeWhere(
                             (element) => element.id == group.id,
@@ -472,6 +545,13 @@ class _EditGroupScreenState extends State<EditGroupScreen> {
                     .map(
                       (m) => Chip(
                         label: Text(m.name),
+                        avatar: CircleAvatar(
+                          radius: 10,
+                          child: Text(
+                            m.name.isNotEmpty ? m.name[0].toUpperCase() : '?',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
                         onDeleted: () {
                           setState(() {
                             _members.remove(m);
@@ -596,25 +676,38 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
                 .map(
                   (m) => Chip(
                     label: Text(m.name),
-                    avatar: const Icon(Icons.person, size: 16),
+                    avatar: CircleAvatar(
+                      radius: 10,
+                      child: Text(
+                        m.name.isNotEmpty ? m.name[0].toUpperCase() : '?',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
                   ),
                 )
                 .toList(),
           ),
+          const SizedBox(height: 8),
+          Builder(
+            builder: (context) {
+              final balances = computeBalances(group);
+              final owingCount = balances.where((b) => b.balance > 0.01).length;
+              if (owingCount == 0) {
+                return const Text(
+                  'Everyone is settled up in this group.',
+                  style: TextStyle(color: Colors.green),
+                );
+              }
+              return Text(
+                '$owingCount member(s) still owe money.',
+                style: const TextStyle(color: Colors.red),
+              );
+            },
+          ),
           const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Expenses',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              TextButton.icon(
-                onPressed: _addExpense,
-                icon: const Icon(Icons.add),
-                label: const Text('Add expense'),
-              ),
-            ],
+          const Text(
+            'Expenses',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           if (group.expenses.isEmpty)
@@ -631,6 +724,55 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
                 margin: const EdgeInsets.only(bottom: 8),
                 child: ListTile(
                   onTap: () => _openExpenseDetail(e),
+                  onLongPress: () async {
+                    final confirmed =
+                        await showDialog<bool>(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Delete expense?'),
+                            content: Text(
+                              'Delete "${e.title}" from this group? This cannot be undone.',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.of(context).pop(false),
+                                child: const Text('Cancel'),
+                              ),
+                              TextButton(
+                                onPressed: () =>
+                                    Navigator.of(context).pop(true),
+                                child: const Text(
+                                  'Delete',
+                                  style: TextStyle(color: Colors.red),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ) ??
+                        false;
+                    if (!confirmed) return;
+                    final groups = await _storage.loadGroups();
+                    final idx = groups.indexWhere(
+                      (g) => g.id == widget.groupId,
+                    );
+                    if (idx == -1) return;
+                    final g = groups[idx];
+                    final updated = SplitGroup(
+                      id: g.id,
+                      name: g.name,
+                      description: g.description,
+                      members: g.members,
+                      expenses: g.expenses
+                          .where((ex) => ex.id != e.id)
+                          .toList(),
+                      settlements: g.settlements,
+                      createdAt: g.createdAt,
+                    );
+                    groups[idx] = updated;
+                    await _storage.saveGroups(groups);
+                    await _load();
+                  },
                   title: Text(e.title),
                   subtitle: Text(
                     '₹${e.amount.toStringAsFixed(2)} • Paid by $payer',
@@ -675,6 +817,16 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   Expense? _editingExpense;
   String? _selectedPayerId;
   final Set<String> _selectedMemberIds = {};
+  SplitMode _splitMode = SplitMode.equal;
+  final Map<String, TextEditingController> _customAmountControllers = {};
+  final Map<String, TextEditingController> _percentControllers = {};
+
+  TextEditingController _controllerFor(
+    Map<String, TextEditingController> map,
+    String memberId,
+  ) {
+    return map.putIfAbsent(memberId, () => TextEditingController());
+  }
 
   @override
   void initState() {
@@ -703,6 +855,14 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
         _selectedMemberIds
           ..clear()
           ..addAll(editing.involvedMemberIds);
+        if (editing.shares != null && editing.shares!.isNotEmpty) {
+          _splitMode = SplitMode.customAmount;
+          _customAmountControllers.clear();
+          editing.shares!.forEach((memberId, share) {
+            final c = _controllerFor(_customAmountControllers, memberId);
+            c.text = share.toStringAsFixed(2);
+          });
+        }
       } else if (group.members.isNotEmpty) {
         _selectedPayerId = group.members.first.id;
         _selectedMemberIds
@@ -722,6 +882,57 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     }
     final amount = double.tryParse(_amountController.text.trim()) ?? 0;
     if (amount <= 0) return;
+
+    Map<String, double>? shares;
+    if (_splitMode == SplitMode.equal) {
+      shares = null;
+    } else if (_splitMode == SplitMode.customAmount) {
+      shares = {};
+      double sum = 0;
+      for (final id in _selectedMemberIds) {
+        final c = _controllerFor(_customAmountControllers, id);
+        final v = double.tryParse(c.text.trim()) ?? 0;
+        if (v <= 0) continue;
+        shares[id] = v;
+        sum += v;
+      }
+      if (shares.isEmpty || (sum - amount).abs() > 0.01) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Custom amounts must add up to total amount.'),
+            ),
+          );
+        }
+        return;
+      }
+    } else if (_splitMode == SplitMode.percentage) {
+      shares = {};
+      double percentSum = 0;
+      for (final id in _selectedMemberIds) {
+        final c = _controllerFor(_percentControllers, id);
+        final p = double.tryParse(c.text.trim()) ?? 0;
+        if (p <= 0) continue;
+        percentSum += p;
+      }
+      if (percentSum <= 0 || (percentSum - 100).abs() > 0.5) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Percentages should add up to ~100%.'),
+            ),
+          );
+        }
+        return;
+      }
+      for (final id in _selectedMemberIds) {
+        final c = _controllerFor(_percentControllers, id);
+        final p = double.tryParse(c.text.trim()) ?? 0;
+        if (p <= 0) continue;
+        final shareAmount = amount * (p / percentSum);
+        shares[id] = shareAmount;
+      }
+    }
     final allGroups = await _storage.loadGroups();
     final idx = allGroups.indexWhere((g) => g.id == group.id);
     if (idx == -1) return;
@@ -737,6 +948,7 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
       payerId: _selectedPayerId!,
       involvedMemberIds: _selectedMemberIds.toList(),
       createdAt: base?.createdAt ?? DateTime.now(),
+      shares: shares,
     );
 
     final List<Expense> newExpenses;
@@ -768,6 +980,12 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     _titleController.dispose();
     _descriptionController.dispose();
     _amountController.dispose();
+    for (final c in _customAmountControllers.values) {
+      c.dispose();
+    }
+    for (final c in _percentControllers.values) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -871,6 +1089,79 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                   );
                 }).toList(),
               ),
+              const SizedBox(height: 16),
+              const Text(
+                'Split type',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              SegmentedButton<SplitMode>(
+                segments: const [
+                  ButtonSegment(value: SplitMode.equal, label: Text('Equal')),
+                  ButtonSegment(
+                    value: SplitMode.customAmount,
+                    label: Text('Custom ₹'),
+                  ),
+                  ButtonSegment(value: SplitMode.percentage, label: Text('%')),
+                ],
+                selected: {_splitMode},
+                onSelectionChanged: (s) {
+                  if (s.isEmpty) return;
+                  setState(() {
+                    _splitMode = s.first;
+                  });
+                },
+              ),
+              if (_splitMode != SplitMode.equal) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _splitMode == SplitMode.customAmount
+                      ? 'Enter amount per person (must total to amount).'
+                      : 'Enter percentage per person (should total ~100%).',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 8),
+                Column(
+                  children: group.members.map((m) {
+                    final selected = _selectedMemberIds.contains(m.id);
+                    if (!selected) {
+                      return ListTile(
+                        dense: true,
+                        title: Text(m.name),
+                        subtitle: const Text('Not in this expense'),
+                      );
+                    }
+                    final controller = _splitMode == SplitMode.customAmount
+                        ? _controllerFor(_customAmountControllers, m.id)
+                        : _controllerFor(_percentControllers, m.id);
+                    final label = _splitMode == SplitMode.customAmount
+                        ? 'Amount'
+                        : '%';
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          Expanded(child: Text(m.name)),
+                          SizedBox(
+                            width: 100,
+                            child: TextField(
+                              controller: controller,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                    decimal: true,
+                                  ),
+                              decoration: InputDecoration(
+                                labelText: label,
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
               const SizedBox(height: 24),
               FilledButton(
                 onPressed: _save,
@@ -1025,7 +1316,15 @@ class ExpenseDetailScreen extends StatelessWidget {
                         .map(
                           (m) => Chip(
                             label: Text(m.name),
-                            avatar: const Icon(Icons.person, size: 16),
+                            avatar: CircleAvatar(
+                              radius: 10,
+                              child: Text(
+                                m.name.isNotEmpty
+                                    ? m.name[0].toUpperCase()
+                                    : '?',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ),
                           ),
                         )
                         .toList(),
@@ -1059,10 +1358,16 @@ List<MemberBalance> computeBalances(SplitGroup group) {
 
   for (final e in group.expenses) {
     if (e.involvedMemberIds.isEmpty) continue;
-    final share = e.amount / e.involvedMemberIds.length;
     paid[e.payerId] = (paid[e.payerId] ?? 0) + e.amount;
-    for (final id in e.involvedMemberIds) {
-      owes[id] = (owes[id] ?? 0) + share;
+    if (e.shares != null && e.shares!.isNotEmpty) {
+      e.shares!.forEach((id, share) {
+        owes[id] = (owes[id] ?? 0) + share;
+      });
+    } else {
+      final share = e.amount / e.involvedMemberIds.length;
+      for (final id in e.involvedMemberIds) {
+        owes[id] = (owes[id] ?? 0) + share;
+      }
     }
   }
 
@@ -1108,6 +1413,8 @@ class ExpenseTransfer {
 }
 
 enum SummaryMode { overall, perExpense }
+
+enum SplitMode { equal, customAmount, percentage }
 
 List<Transfer> computeSuggestedTransfers(List<MemberBalance> balances) {
   final debtors = <MemberBalance>[];
@@ -1157,17 +1464,29 @@ List<ExpenseTransfer> computePerExpenseTransfers(SplitGroup group) {
       (m) => m.id == e.payerId,
       orElse: () => group.members.first,
     );
-    final share = e.amount / e.involvedMemberIds.length;
-
-    for (final id in e.involvedMemberIds) {
-      if (id == payer.id) continue;
-      final from = group.members.firstWhere(
-        (m) => m.id == id,
-        orElse: () => payer,
-      );
-      result.add(
-        ExpenseTransfer(expense: e, from: from, to: payer, amount: share),
-      );
+    if (e.shares != null && e.shares!.isNotEmpty) {
+      e.shares!.forEach((id, share) {
+        if (id == payer.id) return;
+        final from = group.members.firstWhere(
+          (m) => m.id == id,
+          orElse: () => payer,
+        );
+        result.add(
+          ExpenseTransfer(expense: e, from: from, to: payer, amount: share),
+        );
+      });
+    } else {
+      final share = e.amount / e.involvedMemberIds.length;
+      for (final id in e.involvedMemberIds) {
+        if (id == payer.id) continue;
+        final from = group.members.firstWhere(
+          (m) => m.id == id,
+          orElse: () => payer,
+        );
+        result.add(
+          ExpenseTransfer(expense: e, from: from, to: payer, amount: share),
+        );
+      }
     }
   }
   return result;
