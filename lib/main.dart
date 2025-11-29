@@ -324,6 +324,61 @@ final _storage = StorageService();
 
 String _generateId() => DateTime.now().microsecondsSinceEpoch.toString();
 
+// LOGO WIDGET
+
+class TripTallyLogo extends StatelessWidget {
+  final double size;
+  final Color? color;
+
+  const TripTallyLogo({super.key, this.size = 120, this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final primaryColor = color ?? Theme.of(context).primaryColor;
+
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // Background circle
+          Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              color: primaryColor.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+          ),
+          // Icons in a creative layout
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // Mountains icon at top
+              Icon(Icons.landscape, size: size * 0.4, color: primaryColor),
+              SizedBox(height: size * 0.05),
+              // Money and Calculator icons side by side
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.attach_money,
+                    size: size * 0.25,
+                    color: primaryColor,
+                  ),
+                  SizedBox(width: size * 0.1),
+                  Icon(Icons.calculate, size: size * 0.25, color: primaryColor),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // HOME SCREEN
 
 class HomeScreen extends StatefulWidget {
@@ -366,7 +421,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Your Trips & Splits'),
+        title: const Text('TripTally'),
         centerTitle: true,
         actions: [
           IconButton(
@@ -428,8 +483,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.group, size: 80, color: Colors.teal.shade300),
-                    const SizedBox(height: 16),
+                    const TripTallyLogo(size: 120),
+                    const SizedBox(height: 24),
                     const Text(
                       'No splits yet',
                       style: TextStyle(
