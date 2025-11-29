@@ -23,20 +23,103 @@ class SplitterApp extends StatelessWidget {
     return ValueListenableBuilder<ThemeMode>(
       valueListenable: _themeModeNotifier,
       builder: (context, mode, _) {
+        final lightScheme = ColorScheme.fromSeed(
+          seedColor: const Color(0xFF00514A),
+          brightness: Brightness.light,
+        );
+        final darkScheme = ColorScheme.fromSeed(
+          seedColor: const Color(0xFF00514A),
+          brightness: Brightness.dark,
+        );
         return MaterialApp(
           debugShowCheckedModeBanner: false,
           title: 'Smart Splitter',
           theme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
+            colorScheme: lightScheme,
             useMaterial3: true,
-            brightness: Brightness.light,
+            scaffoldBackgroundColor: const Color(0xFFF5FBF9),
+            appBarTheme: AppBarTheme(
+              backgroundColor: const Color(0xFFF5FBF9),
+              foregroundColor: lightScheme.onSurface,
+              elevation: 0,
+              centerTitle: true,
+              titleTextStyle: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF1D2830),
+              ),
+            ),
+            cardTheme: CardThemeData(
+              color: Colors.white,
+              surfaceTintColor: Colors.white,
+              elevation: 2,
+              margin: const EdgeInsets.symmetric(vertical: 6),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+            ),
+            floatingActionButtonTheme: FloatingActionButtonThemeData(
+              backgroundColor: lightScheme.primary,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            chipTheme: ChipThemeData(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              backgroundColor: const Color(0xFFE4F5F1),
+              selectedColor: lightScheme.primary.withOpacity(0.16),
+              labelStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            textTheme: ThemeData.light().textTheme.apply(
+              fontFamily: 'Roboto',
+              bodyColor: const Color(0xFF1D2830),
+              displayColor: const Color(0xFF1D2830),
+            ),
           ),
           darkTheme: ThemeData(
-            colorScheme: ColorScheme.fromSeed(
-              seedColor: Colors.teal,
-              brightness: Brightness.dark,
-            ),
+            colorScheme: darkScheme,
             useMaterial3: true,
+            scaffoldBackgroundColor: const Color(0xFF0D1518),
+            appBarTheme: AppBarTheme(
+              backgroundColor: const Color(0xFF0D1518),
+              foregroundColor: darkScheme.onSurface,
+              elevation: 0,
+              centerTitle: true,
+            ),
+            cardTheme: CardThemeData(
+              color: const Color(0xFF172329),
+              surfaceTintColor: Colors.transparent,
+              elevation: 1,
+              margin: const EdgeInsets.symmetric(vertical: 6),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+            ),
+            floatingActionButtonTheme: FloatingActionButtonThemeData(
+              backgroundColor: darkScheme.primary,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            chipTheme: ChipThemeData(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              backgroundColor: const Color(0xFF22313A),
+              selectedColor: darkScheme.primary.withOpacity(0.2),
+              labelStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            textTheme: ThemeData.dark().textTheme.apply(fontFamily: 'Roboto'),
           ),
           themeMode: mode,
           home: const HomeScreen(),
