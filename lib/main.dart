@@ -671,7 +671,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
           const SizedBox(height: 8),
           Wrap(
             spacing: 8,
-            runSpacing: -8,
+            runSpacing: 8,
             children: group.members
                 .map(
                   (m) => Chip(
