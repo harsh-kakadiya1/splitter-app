@@ -692,6 +692,53 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  Widget _buildStatChip(
+    BuildContext context,
+    IconData icon,
+    String value,
+    String label,
+    Color color,
+  ) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.2), width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: color,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          if (label.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Future<void> _createOrEditGroup([SplitGroup? group]) async {
     await Navigator.of(
       context,
@@ -803,23 +850,54 @@ class _HomeScreenState extends State<HomeScreen> {
           if (groups.isEmpty) {
             return Center(
               child: Padding(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(32),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const TripTallyLogo(size: 120),
-                    const SizedBox(height: 24),
-                    const Text(
+                    Container(
+                      padding: const EdgeInsets.all(24),
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primary.withOpacity(0.1),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const TripTallyLogo(size: 100),
+                    ),
+                    const SizedBox(height: 32),
+                    Text(
                       'No splits yet',
                       style: TextStyle(
-                        fontSize: 20,
+                        fontSize: 24,
                         fontWeight: FontWeight.bold,
+                        color: Theme.of(context).colorScheme.onSurface,
+                        letterSpacing: -0.5,
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Create your first trip/expense group and start splitting smartly.',
+                    const SizedBox(height: 12),
+                    Text(
+                      'Create your first trip/expense group\nand start splitting smartly.',
                       textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: Colors.grey.shade600,
+                        height: 1.5,
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    FilledButton.icon(
+                      onPressed: () => _createOrEditGroup(),
+                      icon: const Icon(Icons.add_rounded),
+                      label: const Text('Create Your First Group'),
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 16,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -829,77 +907,260 @@ class _HomeScreenState extends State<HomeScreen> {
           return RefreshIndicator(
             onRefresh: _reload,
             child: ListView.builder(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(20),
               itemCount: groups.length,
               itemBuilder: (context, index) {
                 final group = groups[index];
-                return Card(
-                  elevation: 2,
-                  margin: const EdgeInsets.only(bottom: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: ListTile(
-                    onTap: () => _openGroup(group),
-                    title: Text(
-                      group.name,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Text(
-                      group.description.isEmpty
-                          ? '${group.members.length} members'
-                          : group.description,
-                    ),
-                    trailing: PopupMenuButton<String>(
-                      onSelected: (value) async {
-                        if (value == 'edit') {
-                          await _createOrEditGroup(group);
-                        } else if (value == 'delete') {
-                          final confirmed =
-                              await showDialog<bool>(
-                                context: context,
-                                builder: (context) => AlertDialog(
-                                  title: const Text('Delete group?'),
-                                  content: Text(
-                                    'This will remove "${group.name}" and all its expenses. This cannot be undone.',
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () =>
-                                          Navigator.of(context).pop(false),
-                                      child: const Text('Cancel'),
-                                    ),
-                                    TextButton(
-                                      onPressed: () =>
-                                          Navigator.of(context).pop(true),
-                                      child: const Text(
-                                        'Delete',
-                                        style: TextStyle(color: Colors.red),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ) ??
-                              false;
-                          if (!confirmed) return;
-                          final prefsGroups = await _storage.loadGroups();
-                          prefsGroups.removeWhere(
-                            (element) => element.id == group.id,
-                          );
-                          await _storage.saveGroups(prefsGroups);
-                          await _reload();
-                        }
-                      },
-                      itemBuilder: (context) => [
-                        const PopupMenuItem(
-                          value: 'edit',
-                          child: Text('Edit group & members'),
+                final totalExpenses = group.expenses.fold<double>(
+                  0,
+                  (sum, e) => sum + e.amount,
+                );
+                final balances = computeBalances(group);
+                final isSettled = balances.every((b) => b.balance.abs() < 0.01);
+
+                return TweenAnimationBuilder<double>(
+                  tween: Tween(begin: 0.0, end: 1.0),
+                  duration: Duration(milliseconds: 300 + (index * 50)),
+                  curve: Curves.easeOut,
+                  builder: (context, value, child) {
+                    return Opacity(
+                      opacity: value,
+                      child: Transform.translate(
+                        offset: Offset(0, 20 * (1 - value)),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(24),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Theme.of(context).cardColor,
+                          Theme.of(context).cardColor.withOpacity(0.8),
+                        ],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.08),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8),
+                          spreadRadius: 0,
                         ),
-                        const PopupMenuItem(
-                          value: 'delete',
-                          child: Text('Delete group'),
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.04),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                          spreadRadius: 0,
                         ),
                       ],
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () => _openGroup(group),
+                        borderRadius: BorderRadius.circular(24),
+                        child: Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          group.name,
+                                          style: TextStyle(
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.bold,
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface,
+                                            letterSpacing: -0.5,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        if (group.description.isNotEmpty)
+                                          Text(
+                                            group.description,
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              color: Colors.grey.shade600,
+                                              height: 1.4,
+                                            ),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          )
+                                        else
+                                          Row(
+                                            children: [
+                                              Icon(
+                                                Icons.people_outline,
+                                                size: 16,
+                                                color: Colors.grey.shade600,
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                '${group.members.length} ${group.members.length == 1 ? 'member' : 'members'}',
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  color: Colors.grey.shade600,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                  PopupMenuButton<String>(
+                                    icon: Icon(
+                                      Icons.more_vert,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    onSelected: (value) async {
+                                      if (value == 'edit') {
+                                        await _createOrEditGroup(group);
+                                      } else if (value == 'delete') {
+                                        final confirmed =
+                                            await showDialog<bool>(
+                                              context: context,
+                                              builder: (context) => AlertDialog(
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(20),
+                                                ),
+                                                title: const Text(
+                                                  'Delete group?',
+                                                ),
+                                                content: Text(
+                                                  'This will remove "${group.name}" and all its expenses. This cannot be undone.',
+                                                ),
+                                                actions: [
+                                                  TextButton(
+                                                    onPressed: () =>
+                                                        Navigator.of(
+                                                          context,
+                                                        ).pop(false),
+                                                    child: const Text('Cancel'),
+                                                  ),
+                                                  TextButton(
+                                                    onPressed: () =>
+                                                        Navigator.of(
+                                                          context,
+                                                        ).pop(true),
+                                                    child: const Text(
+                                                      'Delete',
+                                                      style: TextStyle(
+                                                        color: Colors.red,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ) ??
+                                            false;
+                                        if (!confirmed) return;
+                                        final prefsGroups = await _storage
+                                            .loadGroups();
+                                        prefsGroups.removeWhere(
+                                          (element) => element.id == group.id,
+                                        );
+                                        await _storage.saveGroups(prefsGroups);
+                                        await _reload();
+                                      }
+                                    },
+                                    itemBuilder: (context) => [
+                                      PopupMenuItem(
+                                        value: 'edit',
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              Icons.edit_outlined,
+                                              size: 20,
+                                              color: Colors.grey.shade700,
+                                            ),
+                                            const SizedBox(width: 12),
+                                            const Text('Edit group & members'),
+                                          ],
+                                        ),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 'delete',
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              Icons.delete_outline,
+                                              size: 20,
+                                              color: Colors.red.shade400,
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Text(
+                                              'Delete group',
+                                              style: TextStyle(
+                                                color: Colors.red.shade400,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 16),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _buildStatChip(
+                                      context,
+                                      Icons.receipt_long,
+                                      '${group.expenses.length}',
+                                      group.expenses.length == 1
+                                          ? 'expense'
+                                          : 'expenses',
+                                      Theme.of(context).colorScheme.primary,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _buildStatChip(
+                                      context,
+                                      Icons.currency_rupee,
+                                      '${totalExpenses.toStringAsFixed(0)}',
+                                      'total',
+                                      Colors.green.shade600,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: _buildStatChip(
+                                      context,
+                                      isSettled
+                                          ? Icons.check_circle
+                                          : Icons.pending,
+                                      isSettled ? 'Settled' : 'Pending',
+                                      '',
+                                      isSettled
+                                          ? Colors.green.shade600
+                                          : Colors.orange.shade600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 );
@@ -910,8 +1171,9 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _createOrEditGroup(),
-        icon: const Icon(Icons.add),
+        icon: const Icon(Icons.add_rounded),
         label: const Text('Create split/trip'),
+        elevation: 4,
       ),
     );
   }
@@ -1507,21 +1769,47 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           // Search bar
-          TextField(
-            controller: _searchController,
-            decoration: InputDecoration(
-              hintText: 'Search expenses...',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: _searchQuery.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.clear),
-                      onPressed: () {
-                        _searchController.clear();
-                      },
-                    )
-                  : null,
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search expenses...',
+                hintStyle: TextStyle(color: Colors.grey.shade500),
+                prefixIcon: Icon(
+                  Icons.search_rounded,
+                  color: Colors.grey.shade600,
+                ),
+                suffixIcon: _searchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: Icon(
+                          Icons.clear_rounded,
+                          color: Colors.grey.shade600,
+                        ),
+                        onPressed: () {
+                          _searchController.clear();
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: Theme.of(context).cardColor,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
               ),
             ),
           ),
@@ -1702,28 +1990,76 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
           const SizedBox(height: 16),
           // Category statistics
           if (categoryStats.isNotEmpty) ...[
-            const Text(
+            Text(
               'Category Statistics',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
             ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: categoryStats.entries.map((entry) {
-                final category = entry.key;
-                final amount = entry.value;
-                return Chip(
-                  avatar: Icon(category.icon, color: category.color),
-                  label: Text(
-                    '${category.label}: ₹${amount.toStringAsFixed(2)}',
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).cardColor,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.05),
+                    blurRadius: 15,
+                    offset: const Offset(0, 4),
                   ),
-                  labelStyle: const TextStyle(color: Colors.black),
-                  backgroundColor: category.color.withOpacity(0.1),
-                );
-              }).toList(),
+                ],
+              ),
+              child: Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: categoryStats.entries.map((entry) {
+                  final category = entry.key;
+                  final amount = entry.value;
+                  return Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: category.color.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: category.color.withOpacity(0.3),
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(category.icon, size: 18, color: category.color),
+                        const SizedBox(width: 8),
+                        Text(
+                          category.label,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: category.color,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '₹${amount.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: category.color,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
+              ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
           ],
           if (group.description.isNotEmpty)
             Text(
@@ -1784,14 +2120,62 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
           ),
           const SizedBox(height: 8),
           if (group.expenses.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(top: 16),
-              child: Text('No expenses yet. Tap "Add expense" to start.'),
+            Padding(
+              padding: const EdgeInsets.only(top: 40),
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.primary.withOpacity(0.1),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.receipt_long_outlined,
+                      size: 48,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    'No expenses yet',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Tap "New expense" to start adding expenses',
+                    style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                  ),
+                ],
+              ),
             )
           else if (filteredExpenses.isEmpty)
-            const Padding(
-              padding: EdgeInsets.only(top: 16),
-              child: Text('No expenses match your filters.'),
+            Padding(
+              padding: const EdgeInsets.only(top: 40),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.search_off_outlined,
+                    size: 48,
+                    color: Colors.grey.shade400,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No expenses match your filters',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ],
+              ),
             )
           else
             ...filteredExpenses.asMap().entries.map((entry) {
@@ -1813,78 +2197,217 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
                     ),
                   );
                 },
-                child: Card(
-                  margin: const EdgeInsets.only(bottom: 8),
-                  child: ListTile(
-                    onTap: () => _openExpenseDetail(e),
-                    onLongPress: () async {
-                      final confirmed =
-                          await showDialog<bool>(
-                            context: context,
-                            builder: (context) => AlertDialog(
-                              title: const Text('Delete expense?'),
-                              content: Text(
-                                'Delete "${e.title}" from this group? This cannot be undone.',
-                              ),
-                              actions: [
-                                TextButton(
-                                  onPressed: () =>
-                                      Navigator.of(context).pop(false),
-                                  child: const Text('Cancel'),
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(20),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Theme.of(context).cardColor,
+                        Theme.of(context).cardColor.withOpacity(0.95),
+                      ],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.06),
+                        blurRadius: 15,
+                        offset: const Offset(0, 4),
+                        spreadRadius: 0,
+                      ),
+                    ],
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => _openExpenseDetail(e),
+                      onLongPress: () async {
+                        final confirmed =
+                            await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20),
                                 ),
-                                TextButton(
-                                  onPressed: () =>
-                                      Navigator.of(context).pop(true),
-                                  child: const Text(
-                                    'Delete',
-                                    style: TextStyle(color: Colors.red),
+                                title: const Text('Delete expense?'),
+                                content: Text(
+                                  'Delete "${e.title}" from this group? This cannot be undone.',
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(true),
+                                    child: const Text(
+                                      'Delete',
+                                      style: TextStyle(color: Colors.red),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ) ??
+                            false;
+                        if (!confirmed) return;
+                        // Add haptic feedback when expense is deleted
+                        HapticFeedback.mediumImpact();
+                        final groups = await _storage.loadGroups();
+                        final idx = groups.indexWhere(
+                          (g) => g.id == widget.groupId,
+                        );
+                        if (idx == -1) return;
+                        final g = groups[idx];
+                        final updated = SplitGroup(
+                          id: g.id,
+                          name: g.name,
+                          description: g.description,
+                          members: g.members,
+                          expenses: g.expenses
+                              .where((ex) => ex.id != e.id)
+                              .toList(),
+                          settlements: g.settlements,
+                          createdAt: g.createdAt,
+                        );
+                        groups[idx] = updated;
+                        await _storage.saveGroups(groups);
+                        await _load();
+                      },
+                      borderRadius: BorderRadius.circular(20),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            if (e.category != null)
+                              Container(
+                                width: 56,
+                                height: 56,
+                                decoration: BoxDecoration(
+                                  color: e.category!.color.withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: e.category!.color.withOpacity(0.3),
+                                    width: 1.5,
+                                  ),
+                                ),
+                                child: Icon(
+                                  e.category!.icon,
+                                  color: e.category!.color,
+                                  size: 28,
+                                ),
+                              )
+                            else
+                              Container(
+                                width: 56,
+                                height: 56,
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade200,
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: Icon(
+                                  Icons.receipt_long,
+                                  color: Colors.grey.shade600,
+                                  size: 28,
+                                ),
+                              ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    e.title,
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.person_outline,
+                                        size: 14,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        payer,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          color: Colors.grey.shade600,
+                                        ),
+                                      ),
+                                      if (e.category != null) ...[
+                                        const SizedBox(width: 12),
+                                        Icon(
+                                          e.category!.icon,
+                                          size: 14,
+                                          color: e.category!.color,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          e.category!.label,
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: Colors.grey.shade600,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  '₹${e.amount.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.primary,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.primary.withOpacity(0.1),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    '${e.involvedMemberIds.length} ${e.involvedMemberIds.length == 1 ? 'person' : 'people'}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w500,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                    ),
                                   ),
                                 ),
                               ],
                             ),
-                          ) ??
-                          false;
-                      if (!confirmed) return;
-                      // Add haptic feedback when expense is deleted
-                      HapticFeedback.mediumImpact();
-                      final groups = await _storage.loadGroups();
-                      final idx = groups.indexWhere(
-                        (g) => g.id == widget.groupId,
-                      );
-                      if (idx == -1) return;
-                      final g = groups[idx];
-                      final updated = SplitGroup(
-                        id: g.id,
-                        name: g.name,
-                        description: g.description,
-                        members: g.members,
-                        expenses: g.expenses
-                            .where((ex) => ex.id != e.id)
-                            .toList(),
-                        settlements: g.settlements,
-                        createdAt: g.createdAt,
-                      );
-                      groups[idx] = updated;
-                      await _storage.saveGroups(groups);
-                      await _load();
-                    },
-                    leading: e.category != null
-                        ? CircleAvatar(
-                            backgroundColor: e.category!.color.withOpacity(0.2),
-                            child: Icon(
-                              e.category!.icon,
-                              color: e.category!.color,
-                              size: 20,
-                            ),
-                          )
-                        : null,
-                    title: Text(e.title),
-                    subtitle: Text(
-                      '₹${e.amount.toStringAsFixed(2)} • Paid by $payer${e.category != null ? ' • ${e.category!.label}' : ''}',
-                    ),
-                    trailing: Text(
-                      '${e.involvedMemberIds.length} people',
-                      style: const TextStyle(fontSize: 12),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -1894,8 +2417,9 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _addExpense,
-        icon: const Icon(Icons.add),
+        icon: const Icon(Icons.add_rounded),
         label: const Text('New expense'),
+        elevation: 4,
       ),
     );
   }
@@ -2133,207 +2657,529 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     final isEditing = _editingExpense != null;
 
     return Scaffold(
-      appBar: AppBar(title: Text(isEditing ? 'Edit expense' : 'Add expense')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            children: [
-              TextFormField(
-                controller: _titleController,
-                decoration: const InputDecoration(
-                  labelText: 'Expense name',
-                  hintText: 'Dinner, Taxi, Hotel...',
-                  border: OutlineInputBorder(),
+      appBar: AppBar(
+        title: Text(isEditing ? 'Edit expense' : 'Add expense'),
+        elevation: 0,
+      ),
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+          children: [
+            TextFormField(
+              controller: _titleController,
+              style: TextStyle(
+                fontSize: 16,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+              decoration: InputDecoration(
+                labelText: 'Expense name',
+                hintText: 'Dinner, Taxi, Hotel...',
+                hintStyle: TextStyle(color: Colors.grey.shade400),
+                prefixIcon: Icon(
+                  Icons.title_rounded,
+                  color: Theme.of(context).colorScheme.primary,
                 ),
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _descriptionController,
-                decoration: const InputDecoration(
-                  labelText: 'Description (optional)',
-                  border: OutlineInputBorder(),
+                filled: true,
+                fillColor: Theme.of(context).cardColor,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
                 ),
-                maxLines: 2,
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _amountController,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: Colors.grey.shade300, width: 1),
                 ),
-                decoration: const InputDecoration(
-                  labelText: 'Amount',
-                  prefixText: '₹ ',
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) {
-                  final v = value?.trim() ?? '';
-                  if (v.isEmpty) return 'Amount required';
-                  final parsed = double.tryParse(v);
-                  if (parsed == null || parsed <= 0) {
-                    return 'Enter valid amount';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Category',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: ExpenseCategory.values.map((category) {
-                  final isSelected = _selectedCategory == category;
-                  return FilterChip(
-                    label: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(category.icon, size: 16),
-                        const SizedBox(width: 4),
-                        Text(category.label),
-                      ],
-                    ),
-                    selected: isSelected,
-                    selectedColor: category.color.withOpacity(0.2),
-                    checkmarkColor: category.color,
-                    onSelected: (selected) {
-                      setState(() {
-                        _selectedCategory = selected ? category : null;
-                      });
-                    },
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Who paid?',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: _selectedPayerId,
-                items: group.members
-                    .map(
-                      (m) => DropdownMenuItem(value: m.id, child: Text(m.name)),
-                    )
-                    .toList(),
-                onChanged: (val) {
-                  setState(() {
-                    _selectedPayerId = val;
-                  });
-                },
-                decoration: const InputDecoration(border: OutlineInputBorder()),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Who is in this expense?',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: group.members.map((m) {
-                  final selected = _selectedMemberIds.contains(m.id);
-                  return FilterChip(
-                    label: Text(m.name),
-                    selected: selected,
-                    onSelected: (val) {
-                      setState(() {
-                        if (val) {
-                          _selectedMemberIds.add(m.id);
-                        } else {
-                          _selectedMemberIds.remove(m.id);
-                        }
-                      });
-                    },
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Split type',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              SegmentedButton<SplitMode>(
-                segments: const [
-                  ButtonSegment(value: SplitMode.equal, label: Text('Equal')),
-                  ButtonSegment(
-                    value: SplitMode.customAmount,
-                    label: Text('Custom ₹'),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 2,
                   ),
-                  ButtonSegment(value: SplitMode.percentage, label: Text('%')),
-                ],
-                selected: {_splitMode},
-                onSelectionChanged: (s) {
-                  if (s.isEmpty) return;
-                  setState(() {
-                    _splitMode = s.first;
-                  });
-                },
-              ),
-              if (_splitMode != SplitMode.equal) ...[
-                const SizedBox(height: 12),
-                Text(
-                  _splitMode == SplitMode.customAmount
-                      ? 'Enter amount per person (must total to amount).'
-                      : 'Enter percentage per person (should total ~100%).',
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
-                const SizedBox(height: 8),
-                Column(
-                  children: group.members.map((m) {
-                    final selected = _selectedMemberIds.contains(m.id);
-                    if (!selected) {
-                      return ListTile(
-                        dense: true,
-                        title: Text(m.name),
-                        subtitle: const Text('Not in this expense'),
-                      );
-                    }
-                    final controller = _splitMode == SplitMode.customAmount
-                        ? _controllerFor(_customAmountControllers, m.id)
-                        : _controllerFor(_percentControllers, m.id);
-                    final label = _splitMode == SplitMode.customAmount
-                        ? 'Amount'
-                        : '%';
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            TextFormField(
+              controller: _descriptionController,
+              style: TextStyle(
+                fontSize: 16,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+              maxLines: 2,
+              decoration: InputDecoration(
+                labelText: 'Description (optional)',
+                hintStyle: TextStyle(color: Colors.grey.shade400),
+                prefixIcon: Icon(
+                  Icons.description_outlined,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                filled: true,
+                fillColor: Theme.of(context).cardColor,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: Colors.grey.shade300, width: 1),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 2,
+                  ),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            TextFormField(
+              controller: _amountController,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              decoration: InputDecoration(
+                labelText: 'Amount',
+                hintText: 'Enter amount',
+                filled: true,
+                fillColor: Theme.of(context).cardColor,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: Colors.grey.shade300, width: 1),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 2,
+                  ),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
+              ),
+              validator: (value) {
+                final v = value?.trim() ?? '';
+                if (v.isEmpty) return 'Amount required';
+                final parsed = double.tryParse(v);
+                if (parsed == null || parsed <= 0) {
+                  return 'Enter valid amount';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Category',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: ExpenseCategory.values.map((category) {
+                final isSelected = _selectedCategory == category;
+                return FilterChip(
+                  label: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(category.icon, size: 18),
+                      const SizedBox(width: 6),
+                      Text(
+                        category.label,
+                        style: TextStyle(
+                          fontWeight: isSelected
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                        ),
+                      ),
+                    ],
+                  ),
+                  selected: isSelected,
+                  selectedColor: category.color.withOpacity(0.25),
+                  backgroundColor: category.color.withOpacity(0.1),
+                  checkmarkColor: category.color,
+                  side: BorderSide(
+                    color: isSelected
+                        ? category.color
+                        : category.color.withOpacity(0.3),
+                    width: isSelected ? 2 : 1,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  onSelected: (selected) {
+                    setState(() {
+                      _selectedCategory = selected ? category : null;
+                    });
+                  },
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Who paid?',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: _selectedPayerId,
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: Theme.of(context).cardColor,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(color: Colors.grey.shade300, width: 1),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 2,
+                  ),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
+                prefixIcon: Icon(
+                  Icons.person_outline_rounded,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              items: group.members
+                  .map(
+                    (m) => DropdownMenuItem(
+                      value: m.id,
                       child: Row(
                         children: [
-                          Expanded(child: Text(m.name)),
-                          SizedBox(
-                            width: 100,
-                            child: TextField(
-                              controller: controller,
-                              keyboardType:
-                                  const TextInputType.numberWithOptions(
-                                    decimal: true,
-                                  ),
-                              decoration: InputDecoration(
-                                labelText: label,
-                                isDense: true,
+                          CircleAvatar(
+                            radius: 14,
+                            backgroundColor: Theme.of(
+                              context,
+                            ).colorScheme.primary.withOpacity(0.1),
+                            child: Text(
+                              m.name.isNotEmpty ? m.name[0].toUpperCase() : '?',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Theme.of(context).colorScheme.primary,
                               ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(m.name),
+                        ],
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (val) {
+                setState(() {
+                  _selectedPayerId = val;
+                });
+              },
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Who is in this expense?',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: group.members.map((m) {
+                final selected = _selectedMemberIds.contains(m.id);
+                return FilterChip(
+                  avatar: CircleAvatar(
+                    radius: 12,
+                    backgroundColor: selected
+                        ? Theme.of(context).colorScheme.primary.withOpacity(0.2)
+                        : Colors.grey.shade300,
+                    child: Text(
+                      m.name.isNotEmpty ? m.name[0].toUpperCase() : '?',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: selected
+                            ? Theme.of(context).colorScheme.primary
+                            : Colors.grey.shade700,
+                      ),
+                    ),
+                  ),
+                  label: Text(
+                    m.name,
+                    style: TextStyle(
+                      fontWeight: selected
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
+                  ),
+                  selected: selected,
+                  selectedColor: Theme.of(
+                    context,
+                  ).colorScheme.primary.withOpacity(0.25),
+                  backgroundColor: Colors.grey.shade100,
+                  checkmarkColor: Theme.of(context).colorScheme.primary,
+                  side: BorderSide(
+                    color: selected
+                        ? Theme.of(context).colorScheme.primary
+                        : Colors.grey.shade300,
+                    width: selected ? 2 : 1,
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  onSelected: (val) {
+                    setState(() {
+                      if (val) {
+                        _selectedMemberIds.add(m.id);
+                      } else {
+                        _selectedMemberIds.remove(m.id);
+                      }
+                    });
+                  },
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Split type',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SegmentedButton<SplitMode>(
+              style: SegmentedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              segments: const [
+                ButtonSegment(
+                  value: SplitMode.equal,
+                  label: Text('Equal'),
+                  icon: Icon(Icons.equalizer_outlined),
+                ),
+                ButtonSegment(
+                  value: SplitMode.customAmount,
+                  label: Text('Custom ₹'),
+                  icon: Icon(Icons.currency_rupee_outlined),
+                ),
+                ButtonSegment(
+                  value: SplitMode.percentage,
+                  label: Text('%'),
+                  icon: Icon(Icons.percent_outlined),
+                ),
+              ],
+              selected: {_splitMode},
+              onSelectionChanged: (s) {
+                if (s.isEmpty) return;
+                setState(() {
+                  _splitMode = s.first;
+                });
+              },
+            ),
+            if (_splitMode != SplitMode.equal) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.primary.withOpacity(0.2),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      size: 20,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        _splitMode == SplitMode.customAmount
+                            ? 'Enter amount per person (must total to amount).'
+                            : 'Enter percentage per person (should total ~100%).',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Column(
+                children: group.members.map((m) {
+                  final selected = _selectedMemberIds.contains(m.id);
+                  if (!selected) {
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.person_outline,
+                            size: 20,
+                            color: Colors.grey.shade600,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              m.name,
+                              style: TextStyle(
+                                color: Colors.grey.shade600,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            'Not included',
+                            style: TextStyle(
+                              color: Colors.grey.shade500,
+                              fontSize: 12,
                             ),
                           ),
                         ],
                       ),
                     );
-                  }).toList(),
-                ),
-              ],
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: _save,
-                child: Text(isEditing ? 'Save changes' : 'Save expense'),
+                  }
+                  final controller = _splitMode == SplitMode.customAmount
+                      ? _controllerFor(_customAmountControllers, m.id)
+                      : _controllerFor(_percentControllers, m.id);
+                  final label = _splitMode == SplitMode.customAmount
+                      ? 'Amount'
+                      : '%';
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).cardColor,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade300, width: 1),
+                    ),
+                    child: Row(
+                      children: [
+                        CircleAvatar(
+                          radius: 16,
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.primary.withOpacity(0.1),
+                          child: Text(
+                            m.name.isNotEmpty ? m.name[0].toUpperCase() : '?',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            m.name,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        SizedBox(
+                          width: 120,
+                          child: TextField(
+                            controller: controller,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            style: const TextStyle(fontSize: 15),
+                            decoration: InputDecoration(
+                              labelText: label,
+                              isDense: true,
+                              filled: true,
+                              fillColor: Colors.grey.shade50,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: BorderSide.none,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(),
               ),
             ],
-          ),
+            const SizedBox(height: 32),
+            FilledButton.icon(
+              onPressed: _save,
+              icon: Icon(isEditing ? Icons.check_rounded : Icons.add_rounded),
+              label: Text(isEditing ? 'Save changes' : 'Save expense'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
         ),
       ),
     );
@@ -2358,6 +3204,34 @@ class ExpenseDetailScreen extends StatelessWidget {
     final date = '${two(local.day)}/${two(local.month)}/${local.year}';
     final time = '${two(local.hour)}:${two(local.minute)}';
     return '$date  $time';
+  }
+
+  Widget _buildDetailRow(
+    BuildContext context,
+    IconData icon,
+    String label,
+    String value,
+  ) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: Colors.grey.shade600),
+        const SizedBox(width: 12),
+        Text(
+          '$label: ',
+          style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   @override
@@ -2414,9 +3288,11 @@ class ExpenseDetailScreen extends StatelessWidget {
         return Scaffold(
           appBar: AppBar(
             title: const Text('Expense details'),
+            elevation: 0,
             actions: [
               IconButton(
-                icon: const Icon(Icons.edit),
+                icon: const Icon(Icons.edit_rounded),
+                tooltip: 'Edit expense',
                 onPressed: () async {
                   await Navigator.of(context).push(
                     MaterialPageRoute(
@@ -2430,73 +3306,331 @@ class ExpenseDetailScreen extends StatelessWidget {
               ),
             ],
           ),
-          body: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  expense.title,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
+          body: ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              // Header Card
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(24),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: expense.category != null
+                        ? [
+                            expense.category!.color.withOpacity(0.2),
+                            expense.category!.color.withOpacity(0.1),
+                          ]
+                        : [
+                            Theme.of(
+                              context,
+                            ).colorScheme.primary.withOpacity(0.2),
+                            Theme.of(
+                              context,
+                            ).colorScheme.primary.withOpacity(0.1),
+                          ],
                   ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 15,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  'Amount: ₹${expense.amount.toStringAsFixed(2)}',
-                  style: const TextStyle(fontSize: 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (expense.category != null)
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: expense.category!.color.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          expense.category!.icon,
+                          color: expense.category!.color,
+                          size: 32,
+                        ),
+                      )
+                    else
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade200,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          Icons.receipt_long,
+                          color: Colors.grey.shade600,
+                          size: 32,
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    Text(
+                      expense.title,
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).colorScheme.onSurface,
+                        letterSpacing: -0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '₹${expense.amount.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Paid by: ${payer.name}',
-                  style: const TextStyle(fontSize: 16),
+              ),
+              const SizedBox(height: 24),
+              // Details Card
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).cardColor,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 15,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  'Created: ${_formatDateTime(expense.createdAt)}',
-                  style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
-                ),
-                if (expense.description.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Description',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(expense.description),
-                ],
-                const SizedBox(height: 16),
-                const Text(
-                  'Participants',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                if (participants.isEmpty)
-                  const Text('No participants recorded.')
-                else
-                  Wrap(
-                    spacing: 8,
-                    children: participants
-                        .map(
-                          (m) => Chip(
-                            label: Text(m.name),
-                            labelStyle: const TextStyle(color: Colors.black),
-                            avatar: CircleAvatar(
-                              radius: 10,
-                              child: Text(
-                                m.name.isNotEmpty
-                                    ? m.name[0].toUpperCase()
-                                    : '?',
-                                style: const TextStyle(fontSize: 12),
-                              ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildDetailRow(
+                      context,
+                      Icons.person_outline_rounded,
+                      'Paid by',
+                      payer.name,
+                    ),
+                    const Divider(height: 32),
+                    _buildDetailRow(
+                      context,
+                      Icons.calendar_today_outlined,
+                      'Created',
+                      _formatDateTime(expense.createdAt),
+                    ),
+                    if (expense.category != null) ...[
+                      const Divider(height: 32),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.category_outlined,
+                            size: 20,
+                            color: Colors.grey.shade600,
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            'Category: ',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey.shade600,
                             ),
                           ),
-                        )
-                        .toList(),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: expense.category!.color.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  expense.category!.icon,
+                                  size: 16,
+                                  color: expense.category!.color,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  expense.category!.label,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: expense.category!.color,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (expense.description.isNotEmpty) ...[
+                const SizedBox(height: 20),
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).cardColor,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 15,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
                   ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.description_outlined,
+                            size: 20,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Description',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Theme.of(context).colorScheme.onSurface,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        expense.description,
+                        style: TextStyle(
+                          fontSize: 15,
+                          color: Colors.grey.shade700,
+                          height: 1.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
-            ),
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).cardColor,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 15,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.people_outline_rounded,
+                          size: 20,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Participants (${participants.length})',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    if (participants.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        child: Text(
+                          'No participants recorded.',
+                          style: TextStyle(
+                            color: Colors.grey.shade600,
+                            fontSize: 14,
+                          ),
+                        ),
+                      )
+                    else
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: participants
+                            .map(
+                              (m) => Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 12,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.primary.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.primary.withOpacity(0.2),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    CircleAvatar(
+                                      radius: 14,
+                                      backgroundColor: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                      child: Text(
+                                        m.name.isNotEmpty
+                                            ? m.name[0].toUpperCase()
+                                            : '?',
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      m.name,
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.primary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ),
         );
       },
