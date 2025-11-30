@@ -1845,6 +1845,8 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
                           ) ??
                           false;
                       if (!confirmed) return;
+                      // Add haptic feedback when expense is deleted
+                      HapticFeedback.mediumImpact();
                       final groups = await _storage.loadGroups();
                       final idx = groups.indexWhere(
                         (g) => g.id == widget.groupId,
