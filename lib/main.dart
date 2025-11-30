@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 final ValueNotifier<ThemeMode> _themeModeNotifier = ValueNotifier<ThemeMode>(
@@ -344,6 +346,279 @@ class SplitGroup {
     'settlements': settlements.map((s) => s.toJson()).toList(),
     'createdAt': createdAt.toIso8601String(),
   };
+}
+
+// CELEBRATION ANIMATION WIDGET
+
+class CelebrationAnimation extends StatefulWidget {
+  const CelebrationAnimation({
+    super.key,
+    required this.category,
+    required this.onComplete,
+  });
+
+  final ExpenseCategory? category;
+  final VoidCallback onComplete;
+
+  @override
+  State<CelebrationAnimation> createState() => _CelebrationAnimationState();
+}
+
+class _CelebrationAnimationState extends State<CelebrationAnimation>
+    with TickerProviderStateMixin {
+  late List<AnimationController> _controllers;
+  late List<Animation<double>> _distanceAnimations; // Distance from center
+  late List<Animation<double>> _fadeAnimations;
+  late List<Animation<double>> _rotationAnimations;
+  late List<double> _angles; // Angles for radial movement
+
+  @override
+  void initState() {
+    super.initState();
+    final iconCount = 20;
+    _controllers = List.generate(
+      iconCount,
+      (index) => AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 4500), // Consistent duration
+      ),
+    );
+
+    // Calculate angles for radial distribution (evenly spaced around circle)
+    _angles = List.generate(_controllers.length, (index) {
+      return (index / _controllers.length) * 2 * 3.14159; // 0 to 2π
+    });
+
+    _distanceAnimations = _controllers.map((controller) {
+      return Tween<double>(
+        begin: 0,
+        end: 1000, // Distance from center (enough to go off screen)
+      ).animate(
+        CurvedAnimation(
+          parent: controller,
+          curve: const Cubic(0.25, 0.1, 0.25, 1.0), // Smooth ease-out
+        ),
+      );
+    }).toList();
+
+    _fadeAnimations = _controllers.map((controller) {
+      return Tween<double>(begin: 1.0, end: 0.0).animate(
+        CurvedAnimation(
+          parent: controller,
+          curve: const Interval(0.7, 1.0, curve: Curves.easeOutCubic),
+        ),
+      );
+    }).toList();
+
+    _rotationAnimations = _controllers.map((controller) {
+      return Tween<double>(
+        begin: 0,
+        end: 1.5 * 3.14159, // Slower rotation
+      ).animate(
+        CurvedAnimation(
+          parent: controller,
+          curve: const Cubic(0.4, 0.0, 0.2, 1.0), // Smooth rotation
+        ),
+      );
+    }).toList();
+
+    // Add haptic feedback when animation starts
+    HapticFeedback.mediumImpact();
+
+    // Start animations with slight stagger for smooth burst effect
+    for (int i = 0; i < _controllers.length; i++) {
+      Future.delayed(Duration(milliseconds: (i * 30).clamp(0, 600)), () {
+        if (mounted) {
+          _controllers[i].forward();
+        }
+      });
+    }
+
+    // Add continuous haptic feedback throughout the animation
+    final hapticInterval = 300; // Haptic every 300ms
+    final totalDuration = 2000;
+    for (int i = 0; i < totalDuration; i += hapticInterval) {
+      Future.delayed(Duration(milliseconds: i), () {
+        if (mounted) {
+          HapticFeedback.lightImpact();
+        }
+      });
+    }
+
+    // Complete after animation
+    Future.delayed(const Duration(milliseconds: 5500), () {
+      if (mounted) {
+        widget.onComplete();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    for (final controller in _controllers) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  IconData _getIcon(int index) {
+    if (widget.category == null) {
+      // Default to rupee for no category
+      return Icons.currency_rupee;
+    }
+
+    switch (widget.category!) {
+      case ExpenseCategory.food:
+        final foodIcons = [
+          Icons.restaurant,
+          Icons.fastfood,
+          Icons.cake,
+          Icons.local_pizza,
+          Icons.emoji_food_beverage,
+          Icons.set_meal,
+          Icons.ramen_dining,
+          Icons.lunch_dining,
+        ];
+        return foodIcons[index % foodIcons.length];
+
+      case ExpenseCategory.transport:
+        final transportIcons = [
+          Icons.directions_car,
+          Icons.local_taxi,
+          Icons.train,
+          Icons.flight,
+          Icons.directions_bus,
+          Icons.two_wheeler,
+          Icons.directions_subway,
+          Icons.sailing,
+        ];
+        return transportIcons[index % transportIcons.length];
+
+      case ExpenseCategory.accommodation:
+        final accommodationIcons = [
+          Icons.hotel,
+          Icons.bed,
+          Icons.home,
+          Icons.apartment,
+          Icons.house,
+          Icons.location_city,
+        ];
+        return accommodationIcons[index % accommodationIcons.length];
+
+      case ExpenseCategory.entertainment:
+        final entertainmentIcons = [
+          Icons.movie,
+          Icons.music_note,
+          Icons.sports_esports,
+          Icons.theater_comedy,
+          Icons.live_tv,
+          Icons.casino,
+        ];
+        return entertainmentIcons[index % entertainmentIcons.length];
+
+      case ExpenseCategory.shopping:
+        final shoppingIcons = [
+          Icons.shopping_bag,
+          Icons.shopping_cart,
+          Icons.store,
+          Icons.local_mall,
+          Icons.card_giftcard,
+        ];
+        return shoppingIcons[index % shoppingIcons.length];
+
+      case ExpenseCategory.utilities:
+        final utilitiesIcons = [
+          Icons.bolt,
+          Icons.electric_bolt,
+          Icons.water_drop,
+          Icons.wifi,
+          Icons.phone,
+        ];
+        return utilitiesIcons[index % utilitiesIcons.length];
+
+      case ExpenseCategory.healthcare:
+        final healthcareIcons = [
+          Icons.local_hospital,
+          Icons.medical_services,
+          Icons.medication,
+          Icons.favorite,
+          Icons.health_and_safety,
+        ];
+        return healthcareIcons[index % healthcareIcons.length];
+
+      case ExpenseCategory.other:
+        return Icons.category;
+    }
+  }
+
+  Color _getIconColor(int index) {
+    if (widget.category == null) {
+      return Colors.green;
+    }
+
+    // Use the category's color
+    return widget.category!.color;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Container(
+        color: Colors.transparent,
+        child: Stack(
+          children: List.generate(_controllers.length, (index) {
+            return AnimatedBuilder(
+              animation: _controllers[index],
+              builder: (context, child) {
+                final screenWidth = MediaQuery.of(context).size.width;
+                final screenHeight = MediaQuery.of(context).size.height;
+
+                // Center of the screen
+                final centerX = screenWidth / 2;
+                final centerY = screenHeight / 2;
+
+                // Calculate max distance to ensure icons go off screen
+                final maxDistance =
+                    math.sqrt(
+                      math.pow(screenWidth / 2, 2) +
+                          math.pow(screenHeight / 2, 2),
+                    ) +
+                    100; // Add extra to ensure off-screen
+
+                // Calculate position based on distance and angle from center
+                final baseDistance = _distanceAnimations[index].value;
+                final distance =
+                    (baseDistance / 1000) * maxDistance; // Scale to screen size
+                final angle = _angles[index];
+                final fade = _fadeAnimations[index].value;
+                final rotation = _rotationAnimations[index].value;
+
+                // Calculate X and Y position from center using polar coordinates
+                final x = centerX + distance * math.cos(angle);
+                final y = centerY + distance * math.sin(angle);
+
+                return Positioned(
+                  left: x - 14, // Center the icon (half of typical icon size)
+                  top: y - 14,
+                  child: Opacity(
+                    opacity: fade,
+                    child: Transform.rotate(
+                      angle: rotation,
+                      child: Icon(
+                        _getIcon(index),
+                        color: _getIconColor(index),
+                        size: 28 + (index % 3) * 6,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            );
+          }),
+        ),
+      ),
+    );
+  }
 }
 
 // SIMPLE LOCAL STORAGE SERVICE
@@ -1804,7 +2079,32 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
 
     allGroups[idx] = updatedGroup;
     await _storage.saveGroups(allGroups);
+
+    // Show celebration animation for new expenses
+    if (base == null && mounted) {
+      _showCelebrationAnimation(context, _selectedCategory);
+      // Wait a bit before popping to see the animation
+      await Future.delayed(const Duration(milliseconds: 1000));
+    }
+
     if (mounted) Navigator.of(context).pop();
+  }
+
+  void _showCelebrationAnimation(
+    BuildContext context,
+    ExpenseCategory? category,
+  ) {
+    final overlay = Overlay.of(context);
+    late OverlayEntry overlayEntry;
+    overlayEntry = OverlayEntry(
+      builder: (context) => CelebrationAnimation(
+        category: category,
+        onComplete: () {
+          overlayEntry.remove();
+        },
+      ),
+    );
+    overlay.insert(overlayEntry);
   }
 
   @override
