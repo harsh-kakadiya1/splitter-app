@@ -6,13 +6,149 @@ import 'package:shared_preferences/shared_preferences.dart';
 final ValueNotifier<ThemeMode> _themeModeNotifier = ValueNotifier<ThemeMode>(
   ThemeMode.light,
 );
+final ValueNotifier<AppTheme> _appThemeNotifier = ValueNotifier<AppTheme>(
+  AppTheme.teal,
+);
+
+// THEME CONFIGURATIONS
+enum AppTheme {
+  teal('Teal Ocean', [
+    Color(0xFF00514A), // Primary
+    Color(0xFFE4F5F1), // Chip background
+    Color(0xFFF5FBF9), // Background
+  ]),
+  blue('Blue Sky', [
+    Color(0xFF1976D2), // Primary
+    Color(0xFFE3F2FD), // Chip background
+    Color(0xFFF5F9FF), // Background
+  ]),
+  purple('Purple Dream', [
+    Color(0xFF7B1FA2), // Primary
+    Color(0xFFF3E5F5), // Chip background
+    Color(0xFFFAF5FF), // Background
+  ]),
+  orange('Sunset', [
+    Color(0xFFE65100), // Primary
+    Color(0xFFFFE0B2), // Chip background
+    Color(0xFFFFF5E6), // Background
+  ]),
+  green('Forest', [
+    Color(0xFF2E7D32), // Primary
+    Color(0xFFC8E6C9), // Chip background
+    Color(0xFFF1F8E9), // Background
+  ]);
+
+  const AppTheme(this.name, this.colors);
+  final String name;
+  final List<Color> colors; // [primary, chipBg, scaffoldBg]
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final prefs = await SharedPreferences.getInstance();
   final isDark = prefs.getBool('is_dark_theme') ?? false;
+  final themeIndex = prefs.getInt('app_theme') ?? 0;
   _themeModeNotifier.value = isDark ? ThemeMode.dark : ThemeMode.light;
+  _appThemeNotifier.value =
+      AppTheme.values[themeIndex.clamp(0, AppTheme.values.length - 1)];
   runApp(const SplitterApp());
+}
+
+ThemeData _buildLightTheme(AppTheme appTheme) {
+  final colors = appTheme.colors;
+  final primaryColor = colors[0];
+  final chipBg = colors[1];
+  final scaffoldBg = colors[2];
+
+  final lightScheme = ColorScheme.fromSeed(
+    seedColor: primaryColor,
+    brightness: Brightness.light,
+  );
+
+  return ThemeData(
+    colorScheme: lightScheme,
+    useMaterial3: true,
+    scaffoldBackgroundColor: scaffoldBg,
+    appBarTheme: AppBarTheme(
+      backgroundColor: scaffoldBg,
+      foregroundColor: lightScheme.onSurface,
+      elevation: 0,
+      centerTitle: true,
+      titleTextStyle: const TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.w600,
+        color: Color(0xFF1D2830),
+      ),
+    ),
+    cardTheme: CardThemeData(
+      color: Colors.white,
+      surfaceTintColor: Colors.white,
+      elevation: 2,
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    ),
+    floatingActionButtonTheme: FloatingActionButtonThemeData(
+      backgroundColor: primaryColor,
+      foregroundColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    ),
+    chipTheme: ChipThemeData(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      backgroundColor: chipBg,
+      selectedColor: primaryColor.withOpacity(0.16),
+      labelStyle: const TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w500,
+        color: Colors.black,
+      ),
+    ),
+    textTheme: ThemeData.light().textTheme.apply(
+      fontFamily: 'Roboto',
+      bodyColor: const Color(0xFF1D2830),
+      displayColor: const Color(0xFF1D2830),
+    ),
+  );
+}
+
+ThemeData _buildDarkTheme(AppTheme appTheme) {
+  final colors = appTheme.colors;
+  final primaryColor = colors[0];
+
+  final darkScheme = ColorScheme.fromSeed(
+    seedColor: primaryColor,
+    brightness: Brightness.dark,
+  );
+
+  return ThemeData(
+    colorScheme: darkScheme,
+    useMaterial3: true,
+    scaffoldBackgroundColor: const Color(0xFF0D1518),
+    appBarTheme: AppBarTheme(
+      backgroundColor: const Color(0xFF0D1518),
+      foregroundColor: darkScheme.onSurface,
+      elevation: 0,
+      centerTitle: true,
+    ),
+    cardTheme: CardThemeData(
+      color: const Color(0xFF172329),
+      surfaceTintColor: Colors.transparent,
+      elevation: 1,
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    ),
+    floatingActionButtonTheme: FloatingActionButtonThemeData(
+      backgroundColor: darkScheme.primary,
+      foregroundColor: Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    ),
+    chipTheme: ChipThemeData(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      backgroundColor: const Color(0xFF22313A),
+      selectedColor: darkScheme.primary.withOpacity(0.2),
+      labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+    ),
+    textTheme: ThemeData.dark().textTheme.apply(fontFamily: 'Roboto'),
+  );
 }
 
 class SplitterApp extends StatelessWidget {
@@ -20,109 +156,21 @@ class SplitterApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<ThemeMode>(
-      valueListenable: _themeModeNotifier,
-      builder: (context, mode, _) {
-        final lightScheme = ColorScheme.fromSeed(
-          seedColor: const Color(0xFF00514A),
-          brightness: Brightness.light,
-        );
-        final darkScheme = ColorScheme.fromSeed(
-          seedColor: const Color(0xFF00514A),
-          brightness: Brightness.dark,
-        );
-        return MaterialApp(
-          debugShowCheckedModeBanner: false,
-          title: 'TripTally',
-          theme: ThemeData(
-            colorScheme: lightScheme,
-            useMaterial3: true,
-            scaffoldBackgroundColor: const Color(0xFFF5FBF9),
-            appBarTheme: AppBarTheme(
-              backgroundColor: const Color(0xFFF5FBF9),
-              foregroundColor: lightScheme.onSurface,
-              elevation: 0,
-              centerTitle: true,
-              titleTextStyle: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF1D2830),
-              ),
-            ),
-            cardTheme: CardThemeData(
-              color: Colors.white,
-              surfaceTintColor: Colors.white,
-              elevation: 2,
-              margin: const EdgeInsets.symmetric(vertical: 6),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-            ),
-            floatingActionButtonTheme: FloatingActionButtonThemeData(
-              backgroundColor: lightScheme.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-            ),
-            chipTheme: ChipThemeData(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              backgroundColor: const Color(0xFFE4F5F1),
-              selectedColor: lightScheme.primary.withOpacity(0.16),
-              labelStyle: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            textTheme: ThemeData.light().textTheme.apply(
-              fontFamily: 'Roboto',
-              bodyColor: const Color(0xFF1D2830),
-              displayColor: const Color(0xFF1D2830),
-            ),
-          ),
-          darkTheme: ThemeData(
-            colorScheme: darkScheme,
-            useMaterial3: true,
-            scaffoldBackgroundColor: const Color(0xFF0D1518),
-            appBarTheme: AppBarTheme(
-              backgroundColor: const Color(0xFF0D1518),
-              foregroundColor: darkScheme.onSurface,
-              elevation: 0,
-              centerTitle: true,
-            ),
-            cardTheme: CardThemeData(
-              color: const Color(0xFF172329),
-              surfaceTintColor: Colors.transparent,
-              elevation: 1,
-              margin: const EdgeInsets.symmetric(vertical: 6),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
-            ),
-            floatingActionButtonTheme: FloatingActionButtonThemeData(
-              backgroundColor: darkScheme.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-            ),
-            chipTheme: ChipThemeData(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              backgroundColor: const Color(0xFF22313A),
-              selectedColor: darkScheme.primary.withOpacity(0.2),
-              labelStyle: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            textTheme: ThemeData.dark().textTheme.apply(fontFamily: 'Roboto'),
-          ),
-          themeMode: mode,
-          home: const HomeScreen(),
+    return ValueListenableBuilder<AppTheme>(
+      valueListenable: _appThemeNotifier,
+      builder: (context, appTheme, _) {
+        return ValueListenableBuilder<ThemeMode>(
+          valueListenable: _themeModeNotifier,
+          builder: (context, mode, _) {
+            return MaterialApp(
+              debugShowCheckedModeBanner: false,
+              title: 'TripTally',
+              theme: _buildLightTheme(appTheme),
+              darkTheme: _buildDarkTheme(appTheme),
+              themeMode: mode,
+              home: const HomeScreen(),
+            );
+          },
         );
       },
     );
@@ -391,6 +439,41 @@ class _HomeScreenState extends State<HomeScreen> {
         centerTitle: true,
         actions: [
           IconButton(
+            tooltip: 'Select theme',
+            icon: ValueListenableBuilder<AppTheme>(
+              valueListenable: _appThemeNotifier,
+              builder: (context, theme, _) {
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ...theme.colors
+                        .take(3)
+                        .map(
+                          (color) => Container(
+                            width: 10,
+                            height: 10,
+                            margin: const EdgeInsets.symmetric(horizontal: 2),
+                            decoration: BoxDecoration(
+                              color: color,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.grey.shade400,
+                                width: 0.5,
+                              ),
+                            ),
+                          ),
+                        ),
+                  ],
+                );
+              },
+            ),
+            onPressed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const ThemeSelectionScreen()),
+              );
+            },
+          ),
+          IconButton(
             tooltip: 'Toggle dark mode',
             icon: ValueListenableBuilder<ThemeMode>(
               valueListenable: _themeModeNotifier,
@@ -559,6 +642,97 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+// THEME SELECTION SCREEN
+
+class ThemeSelectionScreen extends StatelessWidget {
+  const ThemeSelectionScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Select Theme')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const Text(
+            'Choose a color theme for your app',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 24),
+          ValueListenableBuilder<AppTheme>(
+            valueListenable: _appThemeNotifier,
+            builder: (context, currentTheme, _) {
+              return Column(
+                children: AppTheme.values.map((theme) {
+                  final isSelected = theme == currentTheme;
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    elevation: isSelected ? 4 : 1,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      side: isSelected
+                          ? BorderSide(color: theme.colors[0], width: 2)
+                          : BorderSide.none,
+                    ),
+                    child: InkWell(
+                      onTap: () async {
+                        _appThemeNotifier.value = theme;
+                        final prefs = await SharedPreferences.getInstance();
+                        await prefs.setInt('app_theme', theme.index);
+                      },
+                      borderRadius: BorderRadius.circular(16),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            // Color preview balls
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: theme.colors.take(3).map((color) {
+                                return Container(
+                                  width: 24,
+                                  height: 24,
+                                  margin: const EdgeInsets.only(right: 6),
+                                  decoration: BoxDecoration(
+                                    color: color,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Colors.grey.shade300,
+                                      width: 1,
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                            const SizedBox(width: 16),
+                            // Theme name
+                            Expanded(
+                              child: Text(
+                                theme.name,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                            // Selected indicator
+                            if (isSelected)
+                              Icon(Icons.check_circle, color: theme.colors[0]),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // CREATE / EDIT GROUP SCREEN
 
 class EditGroupScreen extends StatefulWidget {
@@ -704,6 +878,7 @@ class _EditGroupScreenState extends State<EditGroupScreen> {
                     .map(
                       (m) => Chip(
                         label: Text(m.name),
+                        labelStyle: const TextStyle(color: Colors.black),
                         avatar: CircleAvatar(
                           radius: 10,
                           child: Text(
@@ -1089,6 +1264,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
                       size: 16,
                     ),
                     label: Text(_filterCategory?.label ?? 'Category'),
+                    labelStyle: const TextStyle(color: Colors.black),
                     onDeleted: _filterCategory != null
                         ? () {
                             setState(() {
@@ -1133,6 +1309,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
                                 .name
                           : 'Payer',
                     ),
+                    labelStyle: const TextStyle(color: Colors.black),
                     onDeleted: _filterPayerId != null
                         ? () {
                             setState(() {
@@ -1176,6 +1353,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
                           ? '${_dateRange!.start.day}/${_dateRange!.start.month} - ${_dateRange!.end.day}/${_dateRange!.end.month}'
                           : 'Date',
                     ),
+                    labelStyle: const TextStyle(color: Colors.black),
                     onDeleted: _dateRange != null
                         ? () {
                             setState(() {
@@ -1196,6 +1374,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
                       size: 16,
                     ),
                     label: Text(_getSortLabel()),
+                    labelStyle: const TextStyle(color: Colors.black),
                   ),
                   itemBuilder: (context) => [
                     ...ExpenseSortBy.values.map(
@@ -1264,6 +1443,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
                   label: Text(
                     '${category.label}: ₹${amount.toStringAsFixed(2)}',
                   ),
+                  labelStyle: const TextStyle(color: Colors.black),
                   backgroundColor: category.color.withOpacity(0.1),
                 );
               }).toList(),
@@ -1283,6 +1463,7 @@ class _GroupDetailScreenState extends State<GroupDetailScreen> {
                 .map(
                   (m) => Chip(
                     label: Text(m.name),
+                    labelStyle: const TextStyle(color: Colors.black),
                     avatar: CircleAvatar(
                       radius: 10,
                       child: Text(
@@ -1998,6 +2179,7 @@ class ExpenseDetailScreen extends StatelessWidget {
                         .map(
                           (m) => Chip(
                             label: Text(m.name),
+                            labelStyle: const TextStyle(color: Colors.black),
                             avatar: CircleAvatar(
                               radius: 10,
                               child: Text(
@@ -2138,6 +2320,70 @@ List<Transfer> computeSuggestedTransfers(List<MemberBalance> balances) {
   return transfers;
 }
 
+/// Computes centralized transfers where all members pay to the person
+/// who should receive the highest amount, then that person distributes to others.
+List<Transfer> computeCentralizedTransfers(List<MemberBalance> balances) {
+  final debtors = <MemberBalance>[];
+  final creditors = <MemberBalance>[];
+
+  for (final b in balances) {
+    if (b.balance > 0.01) {
+      debtors.add(MemberBalance(member: b.member, balance: b.balance));
+    } else if (b.balance < -0.01) {
+      creditors.add(MemberBalance(member: b.member, balance: b.balance));
+    }
+  }
+
+  // If no creditors or debtors, return empty
+  if (creditors.isEmpty || debtors.isEmpty) {
+    return [];
+  }
+
+  // Find the creditor who should receive the highest amount (most negative balance)
+  creditors.sort(
+    (a, b) => a.balance.compareTo(b.balance),
+  ); // most negative first
+  final centralCreditor = creditors.first;
+  final centralMember = centralCreditor.member;
+
+  final transfers = <Transfer>[];
+
+  // Step 1: All debtors pay their full debt to the central creditor
+  for (final debtor in debtors) {
+    if (debtor.balance > 0.01) {
+      transfers.add(
+        Transfer(
+          from: debtor.member,
+          to: centralMember,
+          amount: debtor.balance,
+        ),
+      );
+    }
+  }
+
+  // Step 2: Central creditor distributes to other creditors
+  // The central creditor receives all the money from debtors
+  // They keep what they're owed, and distribute the rest to other creditors
+  for (final creditor in creditors) {
+    if (creditor.member.id == centralMember.id)
+      continue; // Skip central creditor
+
+    final creditorAmount =
+        -creditor.balance; // Amount this creditor should receive
+    if (creditorAmount > 0.01) {
+      transfers.add(
+        Transfer(
+          from: centralMember,
+          to: creditor.member,
+          amount: creditorAmount,
+        ),
+      );
+    }
+  }
+
+  return transfers;
+}
+
 List<ExpenseTransfer> computePerExpenseTransfers(SplitGroup group) {
   final result = <ExpenseTransfer>[];
   for (final e in group.expenses) {
@@ -2193,6 +2439,7 @@ class _SummaryScreenState extends State<SummaryScreen> {
   SplitGroup? _group;
   SummaryMode _mode = SummaryMode.overall;
   String? _selectedReceiverId;
+  bool _useCentralizedSettlement = false;
 
   @override
   void initState() {
@@ -2215,7 +2462,9 @@ class _SummaryScreenState extends State<SummaryScreen> {
     }
 
     final balances = computeBalances(group);
-    final transfers = computeSuggestedTransfers(balances);
+    final transfers = _useCentralizedSettlement
+        ? computeCentralizedTransfers(balances)
+        : computeSuggestedTransfers(balances);
     final expenseTransfers = computePerExpenseTransfers(group);
     final transfersByExpense = <String, List<ExpenseTransfer>>{};
     for (final t in expenseTransfers) {
@@ -2249,6 +2498,39 @@ class _SummaryScreenState extends State<SummaryScreen> {
             },
           ),
           const SizedBox(height: 16),
+          if (_mode == SummaryMode.overall) ...[
+            Builder(
+              builder: (context) {
+                final balances = computeBalances(group);
+                final creditors = balances
+                    .where((b) => b.balance < -0.01)
+                    .toList();
+                String? centralPersonName;
+                if (creditors.isNotEmpty && _useCentralizedSettlement) {
+                  creditors.sort((a, b) => a.balance.compareTo(b.balance));
+                  centralPersonName = creditors.first.member.name;
+                }
+                return Card(
+                  child: SwitchListTile(
+                    title: const Text('Centralized Settlement'),
+                    subtitle: Text(
+                      _useCentralizedSettlement && centralPersonName != null
+                          ? 'All members pay to $centralPersonName (who should receive the most), then $centralPersonName distributes to others'
+                          : 'All members pay to the person who should receive the most, then that person distributes to others',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    value: _useCentralizedSettlement,
+                    onChanged: (value) {
+                      setState(() {
+                        _useCentralizedSettlement = value;
+                      });
+                    },
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
           if (_mode == SummaryMode.overall) ...[
             // Filter helpers based on selected receiver
             Builder(
